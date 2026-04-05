@@ -7,6 +7,14 @@ import time
 
 from detection_fusion import DetectionConfig, DualVerificationDetector, read_float_file, read_wireless_file
 from hospital_dispatch import HospitalRegistry, send_hospital_pre_notification
+from live_ingestion import (
+    derive_trigger_confidence,
+    load_live_traffic,
+    load_lora_events,
+    map_match_lora_events,
+    merge_routing_costs,
+)
+from traffic_police_dispatch import send_police_notification
 from route_planner import (
     StaticGraphRouter,
     apply_vehicle_target,
@@ -500,6 +508,9 @@ def write_web_state(
     tls_snapshot: list[dict],
     active_tls_preempted_count: int,
     hospitals: list[dict],
+    trigger_info: dict,
+    selected_corridor_tls: list[str],
+    police_events: list[dict],
     output_file: str,
 ) -> None:
     items = []
@@ -520,6 +531,8 @@ def write_web_state(
                 "speed_kmh": round(speed_mps * 3.6, 2),
                 "hospital_name": plan.get("hospital_name", ""),
                 "eta_seconds": plan.get("eta_seconds"),
+                "reroute_reason": plan.get("reroute_reason", ""),
+                "police_notification_status": plan.get("police_notification_status", "pending"),
                 "reached": vehicle_id in reached_logged_by_vehicle,
                 "breakdown": vehicle_id in breakdown_logged_by_vehicle,
                 "status": (
@@ -541,6 +554,9 @@ def write_web_state(
         "breakdowns": breakdown_events[-50:],
         "signals": tls_snapshot,
         "hospitals": hospitals,
+        "trigger": trigger_info,
+        "selected_corridor_tls": selected_corridor_tls,
+        "police_notifications": police_events[-50:],
     }
     os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as f:
@@ -620,6 +636,21 @@ def main() -> None:
     parser.add_argument("--wireless-file", default="out/wireless_signal.txt")
     parser.add_argument("--lora-udp-host", default="127.0.0.1", help="LoRa gateway UDP host")
     parser.add_argument("--lora-udp-port", type=int, default=0, help="LoRa gateway UDP port (0 disables UDP listener)")
+    parser.add_argument(
+        "--lora-events-file",
+        default="out/lora_events.jsonl",
+        help="Optional JSON/JSONL LoRa event stream file for realtime ingestion.",
+    )
+    parser.add_argument("--lora-events-max-age-s", type=float, default=8.0)
+    parser.add_argument(
+        "--live-traffic-file",
+        default="out/live_traffic.json",
+        help="Optional edge-level live traffic observations for routing-cost merge.",
+    )
+    parser.add_argument("--live-traffic-max-age-s", type=float, default=30.0)
+    parser.add_argument("--routing-base-weight", type=float, default=0.7)
+    parser.add_argument("--routing-live-weight", type=float, default=0.6)
+    parser.add_argument("--routing-incident-penalty-s", type=float, default=45.0)
     parser.add_argument("--hospitals-csv", default="hyderabad_hospitals.csv")
     parser.add_argument(
         "--ambulance-debug-gui",
@@ -660,6 +691,9 @@ def main() -> None:
     parser.add_argument("--reroute-interval-s", type=float, default=5.0)
     parser.add_argument("--step-limit", type=int, default=0, help="0 means run until SUMO completes")
     parser.add_argument("--hospital-log", default="out/hospital_notifications.jsonl")
+    parser.add_argument("--police-endpoint", default="", help="Optional HTTP endpoint for traffic police notifications")
+    parser.add_argument("--police-log", default="out/police_notifications.jsonl")
+    parser.add_argument("--police-notify-cooldown-s", type=float, default=15.0)
     parser.add_argument("--expected-ambulance-count", type=int, default=0)
     parser.add_argument("--breakdown-stop-threshold-s", type=float, default=70.0)
     parser.add_argument("--write-web-state", action="store_true")
@@ -760,14 +794,18 @@ def main() -> None:
     hospital_stop_slots: dict[str, int] = {}
     route_fail_retry_after_ts_by_vehicle: dict[str, float] = {}
     dispatch_ts_by_vehicle: dict[str, float] = {}
+    last_police_notify_ts_by_vehicle: dict[str, float] = {}
     reached_logged_by_vehicle: set[str] = set()
     breakdown_logged_by_vehicle: set[str] = set()
     stopped_since_by_vehicle: dict[str, float] = {}
     arrival_events: list[dict] = []
     breakdown_events: list[dict] = []
+    police_events: list[dict] = []
     hospital_stop_set_by_vehicle: set[str] = set()
     runtime_configured_vehicles: set[str] = set()
     gui_camera_state: dict[str, object] = {"idx": 0, "last_switch_ts": -1e9, "focus_vehicle": "", "view_id": ""}
+    trigger_info: dict = {"confidence": 0.0, "confirmed": False, "sources": [], "matched_lora_events": 0}
+    selected_corridor_tls: list[str] = []
     last_panel_ts = -1e9
     last_assert_ts = -1e9
     last_web_state_ts = -1e9
@@ -838,16 +876,65 @@ def main() -> None:
             except Exception:
                 pass
 
+        wall_now_ts = time.time()
         siren_score = read_float_file(args.mic_score_file, default=0.0)
-        wireless_seen = read_wireless_file(args.wireless_file) or lora.poll()
-        confirmed = detector.update(siren_score=siren_score, wireless_seen=wireless_seen, now_ts=time.time())
+        lora_udp_seen = lora.poll()
+        lora_file_events = load_lora_events(
+            args.lora_events_file,
+            now_ts=wall_now_ts,
+            max_age_s=float(args.lora_events_max_age_s),
+        )
+        matched_lora_events = map_match_lora_events(
+            traci,
+            lora_file_events,
+            static_router.edge_center_xy if static_router is not None else {},
+        )
+
+        wireless_file_seen = read_wireless_file(args.wireless_file)
+        wireless_seen = wireless_file_seen or lora_udp_seen or bool(matched_lora_events)
+        geo_valid = bool(matched_lora_events)
+        trigger_confidence = derive_trigger_confidence(
+            siren_score=siren_score,
+            wireless_seen=wireless_seen,
+            geo_valid=geo_valid,
+        )
+        confirmed = detector.update(siren_score=siren_score, wireless_seen=wireless_seen, now_ts=wall_now_ts)
+
+        trigger_sources = []
+        if siren_score > 0.0:
+            trigger_sources.append("siren")
+        if wireless_file_seen:
+            trigger_sources.append("wireless_file")
+        if lora_udp_seen:
+            trigger_sources.append("lora_udp")
+        if matched_lora_events:
+            trigger_sources.append("lora_map_matched")
+
+        trigger_info = {
+            "confidence": round(float(trigger_confidence), 3),
+            "confirmed": bool(confirmed),
+            "sources": trigger_sources,
+            "matched_lora_events": len(matched_lora_events),
+        }
 
         should_preempt = bool(args.force_green_corridor or confirmed)
         if should_preempt:
             now = traci.simulation.getTime()
             live_edge_costs = None
             if static_router is not None:
-                live_edge_costs = snapshot_live_edge_costs(traci, static_router)
+                sumo_costs = snapshot_live_edge_costs(traci, static_router)
+                roadside_obs = load_live_traffic(
+                    args.live_traffic_file,
+                    now_ts=wall_now_ts,
+                    max_age_s=float(args.live_traffic_max_age_s),
+                )
+                live_edge_costs = merge_routing_costs(
+                    base_costs=sumo_costs,
+                    traffic_by_edge=roadside_obs,
+                    base_weight=float(args.routing_base_weight),
+                    live_weight=float(args.routing_live_weight),
+                    incident_penalty_s=float(args.routing_incident_penalty_s),
+                )
 
             controllable_vehicles = [
                 v for v in active_vehicles if v not in reached_logged_by_vehicle and v not in breakdown_logged_by_vehicle
@@ -897,6 +984,12 @@ def main() -> None:
                     if eta_adjusted.get(assigned_id, float("inf")) < float("inf"):
                         best = next((h for h in hospitals.hospitals if h.hospital_id == assigned_id), best)
                 if best and best.hospital_id in hospital_edge_map:
+                    reroute_reason = "best_eta_capacity"
+                    if assigned_id == best.hospital_id:
+                        reroute_reason = "keep_assigned_stability"
+                    elif static_router is not None and args.routing_algorithm in {"dijkstra", "astar"}:
+                        reroute_reason = "switched_due_live_traffic"
+
                     plan = build_route_to_hospital(
                         traci,
                         vehicle_id,
@@ -924,6 +1017,11 @@ def main() -> None:
                             "hospital_id": best.hospital_id,
                             "hospital_name": best.name,
                             "eta_seconds": plan.eta_seconds,
+                            "reroute_reason": reroute_reason,
+                            "police_notification_status": selected_plan_by_vehicle.get(vehicle_id, {}).get(
+                                "police_notification_status",
+                                "pending",
+                            ),
                         }
                         if vehicle_id not in hospital_stop_set_by_vehicle:
                             apply_hospital_stop(
@@ -956,8 +1054,48 @@ def main() -> None:
 
             priority_by_vehicle = {v: get_priority_score(v, args.emergency_type) for v in controllable_vehicles}
             controller.preempt_for_vehicles(traci, controllable_vehicles, priority_by_vehicle)
+            selected_corridor_tls = sorted(controller.active_tls_ids())
+
+            for vehicle_id in controllable_vehicles:
+                plan = selected_plan_by_vehicle.get(vehicle_id, {})
+                eta_seconds = plan.get("eta_seconds")
+                reroute_reason = str(plan.get("reroute_reason", "best_eta_capacity"))
+
+                corridor_for_vehicle = [
+                    tls_id
+                    for tls_id, owner in controller.tls_owner_map().items()
+                    if owner == vehicle_id
+                ]
+
+                last_police_ts = float(last_police_notify_ts_by_vehicle.get(vehicle_id, -1e9))
+                if float(now) - last_police_ts < float(args.police_notify_cooldown_s):
+                    continue
+
+                police_result = send_police_notification(
+                    endpoint=str(args.police_endpoint),
+                    fallback_log_path=str(args.police_log),
+                    vehicle_id=vehicle_id,
+                    emergency_type=str(args.emergency_type),
+                    eta_seconds=eta_seconds,
+                    corridor_tls_ids=corridor_for_vehicle,
+                    trigger_confidence=float(trigger_info.get("confidence", 0.0)),
+                    reroute_reason=reroute_reason,
+                )
+                police_status = str(police_result.get("status", "unknown"))
+                selected_plan_by_vehicle.setdefault(vehicle_id, {})["police_notification_status"] = police_status
+                police_events.append(
+                    {
+                        "timestamp": round(float(sim_time), 1),
+                        "vehicle_id": vehicle_id,
+                        "status": police_status,
+                        "corridor_tls": corridor_for_vehicle,
+                        "reroute_reason": reroute_reason,
+                    }
+                )
+                last_police_notify_ts_by_vehicle[vehicle_id] = float(now)
         else:
             controller.restore_finished_tls(traci)
+            selected_corridor_tls = sorted(controller.active_tls_ids())
 
         sim_time = float(traci.simulation.getTime())
         maybe_log_hospital_arrivals(
@@ -1012,6 +1150,9 @@ def main() -> None:
                 tls_snapshot=tls_snapshot,
                 active_tls_preempted_count=controller.active_tls_count(),
                 hospitals=hospital_points,
+                trigger_info=trigger_info,
+                selected_corridor_tls=selected_corridor_tls,
+                police_events=police_events,
                 output_file=args.web_state_file,
             )
             last_web_state_ts = sim_time

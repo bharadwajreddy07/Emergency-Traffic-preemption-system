@@ -62,6 +62,8 @@
         <div class="card"><div class="label">Active Ambulances</div><div id="active" class="metric">0</div></div>
         <div class="card"><div class="label">Preempted Signals</div><div id="preempted" class="metric">0</div></div>
         <div class="card"><div class="label">Arrivals</div><div id="arrivalsCount" class="metric">0</div></div>
+        <div class="card"><div class="label">Trigger Confidence</div><div id="triggerConfidence" class="metric">0.000</div></div>
+        <div class="card"><div class="label">Police Alerts</div><div id="policeCount" class="metric">0</div></div>
       </div>
 
       <div class="section">
@@ -72,6 +74,16 @@
       <div class="section">
         <h3>Arrival Timeline (ETA/Elapsed)</h3>
         <div id="arrivals" class="list"></div>
+      </div>
+
+      <div class="section">
+        <h3>Selected Corridor TLS</h3>
+        <div id="corridorTls" class="list"></div>
+      </div>
+
+      <div class="section">
+        <h3>Police Notification Status</h3>
+        <div id="policeLog" class="list"></div>
       </div>
     </aside>
     <main id="map"></main>
@@ -152,15 +164,35 @@
     }
 
     function fleetRow(amb) {
-      return `<div class="row"><div class="id">${amb.id}</div><div>hospital: ${amb.hospital_name || 'n/a'}</div><div>eta: ${amb.eta_seconds ?? 'n/a'} s</div><div>speed: ${amb.speed_kmh} km/h</div><div class="status ${amb.status}">${amb.status}</div></div>`;
+      return `<div class="row"><div class="id">${amb.id}</div><div>hospital: ${amb.hospital_name || 'n/a'}</div><div>eta: ${amb.eta_seconds ?? 'n/a'} s</div><div>reroute: ${amb.reroute_reason || 'n/a'}</div><div>police: ${amb.police_notification_status || 'pending'}</div><div>speed: ${amb.speed_kmh} km/h</div><div class="status ${amb.status}">${amb.status}</div></div>`;
     }
 
     function arrivalRow(evt) {
       return `<div class="row"><div class="id">${evt.vehicle_id}</div><div>hospital: ${evt.hospital_name}</div><div>t: ${evt.timestamp}s</div><div>elapsed: ${evt.elapsed_seconds}s</div></div>`;
     }
 
+    function corridorTlsRow(tlsId) {
+      return `<div class="row"><div class="id">${tlsId}</div><div>status: green corridor selected</div></div>`;
+    }
+
+    function policeRow(evt) {
+      const tlsText = (evt.corridor_tls || []).join(', ') || 'n/a';
+      return `<div class="row"><div class="id">${evt.vehicle_id}</div><div>status: ${evt.status}</div><div>reroute: ${evt.reroute_reason || 'n/a'}</div><div>corridor TLS: ${tlsText}</div><div>t: ${evt.timestamp}s</div></div>`;
+    }
+
     async function tick() {
-      let data = { timestamp: 0, active_ambulances: 0, active_tls_preempted: 0, ambulances: [], arrivals: [], signals: [], hospitals: [] };
+      let data = {
+        timestamp: 0,
+        active_ambulances: 0,
+        active_tls_preempted: 0,
+        ambulances: [],
+        arrivals: [],
+        signals: [],
+        hospitals: [],
+        trigger: { confidence: 0.0, confirmed: false, sources: [] },
+        selected_corridor_tls: [],
+        police_notifications: []
+      };
       try {
         const res = await fetch('/api/state', { cache: 'no-store' });
         data = await res.json();
@@ -170,6 +202,8 @@
       document.getElementById('active').textContent = data.active_ambulances || 0;
       document.getElementById('preempted').textContent = data.active_tls_preempted || 0;
       document.getElementById('arrivalsCount').textContent = (data.arrivals || []).length;
+      document.getElementById('triggerConfidence').textContent = Number(data.trigger?.confidence || 0).toFixed(3);
+      document.getElementById('policeCount').textContent = (data.police_notifications || []).length;
 
       const seen = new Set();
       const fleet = document.getElementById('fleet');
@@ -215,6 +249,18 @@
       arrivalBox.innerHTML = '';
       for (const evt of (data.arrivals || []).slice().reverse()) {
         arrivalBox.insertAdjacentHTML('beforeend', arrivalRow(evt));
+      }
+
+      const corridorBox = document.getElementById('corridorTls');
+      corridorBox.innerHTML = '';
+      for (const tlsId of (data.selected_corridor_tls || [])) {
+        corridorBox.insertAdjacentHTML('beforeend', corridorTlsRow(tlsId));
+      }
+
+      const policeBox = document.getElementById('policeLog');
+      policeBox.innerHTML = '';
+      for (const evt of (data.police_notifications || []).slice().reverse()) {
+        policeBox.insertAdjacentHTML('beforeend', policeRow(evt));
       }
 
       for (const h of data.hospitals || []) {

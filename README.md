@@ -201,6 +201,103 @@ Headless mode:
 python smart_emergency_system.py --sumocfg hyderabad.sumocfg --sumo-binary sumo
 ```
 
+## 5.2) Phase-1 Real-World Data + Police Alerts
+
+The controller now supports realtime roadside ingestion, LoRa map-matching, merged routing costs in `dijkstra/astar`, and police notifications.
+
+### New runtime options
+
+```powershell
+python smart_emergency_system.py `
+  --sumocfg hyderabad.sumocfg `
+  --routing-algorithm dijkstra `
+  --live-traffic-file out/live_traffic.json `
+  --lora-events-file out/lora_events.jsonl `
+  --police-log out/police_notifications.jsonl `
+  --write-web-state
+```
+
+Optional API endpoint for traffic police command center:
+
+```powershell
+python smart_emergency_system.py --sumocfg hyderabad.sumocfg --police-endpoint http://127.0.0.1:9000/police/alerts
+```
+
+### `out/live_traffic.json` format
+
+```json
+{
+  "timestamp": 1710000000,
+  "edges": [
+    {
+      "edge_id": "25286049#0",
+      "speed_kmh": 14.0,
+      "occupancy": 0.72,
+      "confidence": 0.9,
+      "incident": false
+    }
+  ]
+}
+```
+
+### `out/lora_events.jsonl` format
+
+Each line is one JSON object:
+
+```json
+{"timestamp": 1710000000, "ambulance_id": "ambulance_1", "lat": 17.4401, "lon": 78.3902, "emergency": true}
+```
+
+### Dashboard fields added
+
+Web dashboard now shows:
+
+1. Trigger confidence
+2. Selected corridor TLS IDs
+3. Reroute reason (per ambulance)
+4. Police notification status
+
+### Mock realtime generator (no hardware required)
+
+You can generate both `out/live_traffic.json` and `out/lora_events.jsonl` with a single helper script:
+
+```powershell
+python generate_mock_realtime_inputs.py --net-file hyderabad.net.xml --truncate-lora --interval-s 1.0
+```
+
+Run for a fixed number of ticks (for test automation):
+
+```powershell
+python generate_mock_realtime_inputs.py --iterations 30 --truncate-lora
+```
+
+Recommended full demo (three terminals):
+
+1. Generate mock data continuously:
+
+```powershell
+python generate_mock_realtime_inputs.py --truncate-lora
+```
+
+2. Run emergency controller using merged realtime inputs:
+
+```powershell
+python smart_emergency_system.py `
+  --sumocfg hyderabad.sumocfg `
+  --sumo-binary sumo-gui `
+  --routing-algorithm dijkstra `
+  --live-traffic-file out/live_traffic.json `
+  --lora-events-file out/lora_events.jsonl `
+  --police-log out/police_notifications.jsonl `
+  --write-web-state
+```
+
+3. Start dashboard server:
+
+```powershell
+python web/realtime_server.py --host 127.0.0.1 --port 8090
+```
+
 ## 5.1) Parallel Realtime Web Dashboard
 
 SUMO workflow remains unchanged; you can run a parallel web map using exported realtime state.
