@@ -1,0 +1,13 @@
+hospital_id,name,lat,lon,capacity_available,supports_trauma,supports_cardiac,supports_stroke,endpoint
+vikram_hospitals,Vikram Hospitals,17.440686,78.391665,20,1,1,1,
+image_hospitals,Image Hospitals,17.444434,78.386075,20,1,1,1,
+apollo_dental_clinic_hitech_city,"Apollo Dental Clinic, Hitech City",17.450384,78.382561,20,1,1,1,
+maxcure_suyosha_woman_child_hospital,MAXCURE SUYOSHA WOMAN & CHILD HOSPITAL,17.446436,78.378648,20,1,1,1,
+oakridge_hospitals,Oakridge Hospitals,17.444840,78.385505,20,1,1,1,
+srinivasa_hospital,Srinivasa Hospital,17.440695,78.394359,20,1,1,1,
+lifespan_hospitals,lifespan hospitals,17.445820,78.392417,20,1,1,1,
+samanta_homeopathy,Samanta Homeopathy,17.441378,78.388090,20,1,1,1,
+hegde_hospital,Hegde Hospital,17.444623,78.384659,20,1,1,1,
+medicover,Medicover,17.455214,78.377560,20,1,1,1,
+pace_hospitals,Pace Hospitals,17.446750,78.384012,20,1,1,1,
+hospitalway_642171981,HospitalWay_642171981,17.446822,78.379665,20,1,1,1,

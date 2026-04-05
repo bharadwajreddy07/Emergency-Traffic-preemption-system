@@ -1,0 +1,19 @@
+<configuration>
+  <input>
+    <net-file value="hyderabad.net.xml"/>
+    <route-files value="hyderabad_car.rou.xml,hyderabad_bike.rou.xml,hyderabad_ped.rou.xml,emergency_vehicle.rou.xml"/>
+    <additional-files value="hospital_markers.add.xml"/>
+  </input>
+  <time>
+    <begin value="0"/>
+    <end value="7200"/>
+    <step-length value="1.0"/>
+  </time>
+  <processing>
+    <ignore-route-errors value="true"/>
+  </processing>
+  <report>
+    <verbose value="false"/>
+    <no-step-log value="true"/>
+  </report>
+</configuration>

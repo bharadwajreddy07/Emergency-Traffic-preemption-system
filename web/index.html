@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Emergency Corridor Operations Center</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #10192f;
+      --card: #0f172a;
+      --border: #22304e;
+      --text: #dbe7ff;
+      --muted: #8ea0c6;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --err: #ef4444;
+      --accent: #38bdf8;
+    }
+    html, body { margin: 0; height: 100%; background: radial-gradient(1200px 700px at 10% -20%, #1d2a48 0%, var(--bg) 55%); color: var(--text); font-family: "Segoe UI", Tahoma, sans-serif; }
+    .layout { display: grid; grid-template-columns: 390px 1fr; height: 100%; }
+    .sidebar { background: linear-gradient(180deg, #0a1327, var(--panel)); border-right: 1px solid var(--border); padding: 14px; overflow: auto; }
+    .title { font-size: 20px; font-weight: 700; }
+    .subtitle { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .grid { margin-top: 12px; display: grid; gap: 10px; grid-template-columns: repeat(2, 1fr); }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 10px; }
+    .metric { font-size: 24px; font-weight: 700; }
+    .label { font-size: 12px; color: var(--muted); }
+    .section { margin-top: 12px; }
+    .section h3 { margin: 0 0 8px; font-size: 14px; color: #bfdbfe; }
+    .list { max-height: 28vh; overflow: auto; display: grid; gap: 8px; }
+    .row { border: 1px solid var(--border); border-radius: 10px; padding: 8px; background: #0a142b; }
+    .id { color: #fecaca; font-weight: 700; }
+    .status { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    .status.enroute { color: var(--accent); }
+    .status.reached { color: var(--ok); }
+    .status.breakdown { color: var(--err); }
+    #map { height: 100%; }
+    .legend {
+      position: absolute; left: 410px; bottom: 14px; z-index: 1000;
+      background: rgba(5,10,22,0.92); border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px; font-size: 12px;
+    }
+    .chip { display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid #fff; }
+    .toast-wrap { position: fixed; right: 14px; top: 14px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+    .toast { background: #081329; border: 1px solid var(--border); border-radius: 10px; min-width: 280px; padding: 10px 12px; box-shadow: 0 10px 34px rgba(0,0,0,0.35); }
+    .toast.reached { border-color: var(--ok); }
+    .toast.breakdown { border-color: var(--err); }
+  </style>
+</head>
+<body>
+  <div id="toasts" class="toast-wrap"></div>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="title">Emergency Corridor Operations Center</div>
+      <div class="subtitle">Realtime fleet + traffic signal intelligence</div>
+
+      <div class="grid">
+        <div class="card"><div class="label">Simulation Time</div><div id="time" class="metric">0.0s</div></div>
+        <div class="card"><div class="label">Active Ambulances</div><div id="active" class="metric">0</div></div>
+        <div class="card"><div class="label">Preempted Signals</div><div id="preempted" class="metric">0</div></div>
+        <div class="card"><div class="label">Arrivals</div><div id="arrivalsCount" class="metric">0</div></div>
+      </div>
+
+      <div class="section">
+        <h3>Fleet Status</h3>
+        <div id="fleet" class="list"></div>
+      </div>
+
+      <div class="section">
+        <h3>Arrival Timeline (ETA/Elapsed)</h3>
+        <div id="arrivals" class="list"></div>
+      </div>
+    </aside>
+    <main id="map"></main>
+  </div>
+
+  <div class="legend">
+    <div><strong>Map Legend</strong></div>
+    <div class="chip"><span class="dot" style="background:#38bdf8"></span>Ambulance Enroute</div>
+    <div class="chip"><span class="dot" style="background:#22c55e"></span>Ambulance Reached</div>
+    <div class="chip"><span class="dot" style="background:#dc2626"></span>Ambulance Breakdown</div>
+    <div class="chip"><span style="color:#ef4444;font-weight:700">✚</span> Hospital</div>
+    <div class="chip"><span class="dot" style="background:#22c55e"></span>Signal Green</div>
+    <div class="chip"><span class="dot" style="background:#f59e0b"></span>Signal Yellow/Orange</div>
+    <div class="chip"><span class="dot" style="background:#ef4444"></span>Signal Red</div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map', { zoomControl: true }).setView([17.4435, 78.3850], 14);
+
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: 'OSM' });
+    const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20, attribution: 'Carto' });
+    const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri' });
+    osm.addTo(map);
+    L.control.layers({ 'Road (OSM)': osm, 'Dark': dark, 'Satellite (Flyover Check)': satellite }, {}).addTo(map);
+
+    const markers = new Map();
+    const signalMarkers = new Map();
+    const signalHalos = new Map();
+    const pulsingSignals = new Set();
+    const hospitalMarkers = new Map();
+    const prevStatusById = new Map();
+
+    function startSignalPulseLoop() {
+      function frame(nowMs) {
+        const t = nowMs / 1000;
+        const radius = 6.5 + Math.sin(t * 6.0) * 1.8;
+        const opacity = 0.60 + (Math.sin(t * 6.0) + 1.0) * 0.12;
+        const haloRadius = 10 + (Math.sin(t * 3.0) + 1.0) * 4.5;
+        const haloOpacity = 0.18 + (Math.sin(t * 3.0) + 1.0) * 0.08;
+        for (const id of pulsingSignals) {
+          const marker = signalMarkers.get(id);
+          if (!marker) continue;
+          marker.setStyle({ radius, fillOpacity: opacity });
+
+          const halo = signalHalos.get(id);
+          if (halo) {
+            halo.setStyle({ radius: haloRadius, opacity: haloOpacity, fillOpacity: 0.04 + haloOpacity * 0.4 });
+          }
+        }
+        window.requestAnimationFrame(frame);
+      }
+      window.requestAnimationFrame(frame);
+    }
+
+    function markerHtml(status) {
+      const color = status === 'breakdown' ? '#dc2626' : (status === 'reached' ? '#22c55e' : '#38bdf8');
+      return `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #fff;"></div>`;
+    }
+
+    function hospitalHtml() {
+      return `<div style="width:18px;height:18px;border-radius:9px;background:#fff;border:2px solid #ef4444;color:#ef4444;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:13px;line-height:1;">✚</div>`;
+    }
+
+    function signalColor(color) {
+      if (color === 'green') return '#22c55e';
+      if (color === 'yellow/orange') return '#f59e0b';
+      return '#ef4444';
+    }
+
+    function pushToast(text, cls) {
+      const wrap = document.getElementById('toasts');
+      const node = document.createElement('div');
+      node.className = `toast ${cls || ''}`;
+      node.textContent = text;
+      wrap.appendChild(node);
+      setTimeout(() => node.remove(), 6000);
+    }
+
+    function fleetRow(amb) {
+      return `<div class="row"><div class="id">${amb.id}</div><div>hospital: ${amb.hospital_name || 'n/a'}</div><div>eta: ${amb.eta_seconds ?? 'n/a'} s</div><div>speed: ${amb.speed_kmh} km/h</div><div class="status ${amb.status}">${amb.status}</div></div>`;
+    }
+
+    function arrivalRow(evt) {
+      return `<div class="row"><div class="id">${evt.vehicle_id}</div><div>hospital: ${evt.hospital_name}</div><div>t: ${evt.timestamp}s</div><div>elapsed: ${evt.elapsed_seconds}s</div></div>`;
+    }
+
+    async function tick() {
+      let data = { timestamp: 0, active_ambulances: 0, active_tls_preempted: 0, ambulances: [], arrivals: [], signals: [], hospitals: [] };
+      try {
+        const res = await fetch('/api/state', { cache: 'no-store' });
+        data = await res.json();
+      } catch {}
+
+      document.getElementById('time').textContent = `${(data.timestamp || 0).toFixed(1)}s`;
+      document.getElementById('active').textContent = data.active_ambulances || 0;
+      document.getElementById('preempted').textContent = data.active_tls_preempted || 0;
+      document.getElementById('arrivalsCount').textContent = (data.arrivals || []).length;
+
+      const seen = new Set();
+      const fleet = document.getElementById('fleet');
+      fleet.innerHTML = '';
+
+      for (const amb of data.ambulances || []) {
+        seen.add(amb.id);
+        fleet.insertAdjacentHTML('beforeend', fleetRow(amb));
+
+        const prev = prevStatusById.get(amb.id);
+        if (prev && prev !== amb.status) {
+          if (amb.status === 'reached') {
+            const next = (data.ambulances || []).find(a => a.status === 'enroute');
+            const nextText = next ? ` Next: ${next.id} -> ${next.hospital_name || 'nearest hospital'}` : '';
+            pushToast(`${amb.id} reached hospital.${nextText}`, 'reached');
+          }
+          if (amb.status === 'breakdown') {
+            pushToast(`${amb.id} marked breakdown`, 'breakdown');
+          }
+        }
+        prevStatusById.set(amb.id, amb.status);
+
+        let m = markers.get(amb.id);
+        if (!m) {
+          m = L.marker([amb.lat, amb.lon], {
+            icon: L.divIcon({ className: '', html: markerHtml(amb.status), iconSize: [18, 18] })
+          }).addTo(map);
+          markers.set(amb.id, m);
+        }
+        m.setLatLng([amb.lat, amb.lon]);
+        m.setIcon(L.divIcon({ className: '', html: markerHtml(amb.status), iconSize: [18, 18] }));
+        m.bindPopup(`${amb.id}<br>status=${amb.status}<br>speed=${amb.speed_kmh} km/h<br>hospital=${amb.hospital_name || 'n/a'}<br>eta=${amb.eta_seconds ?? 'n/a'}s`);
+      }
+
+      for (const [id, m] of markers.entries()) {
+        if (!seen.has(id)) {
+          map.removeLayer(m);
+          markers.delete(id);
+        }
+      }
+
+      const arrivalBox = document.getElementById('arrivals');
+      arrivalBox.innerHTML = '';
+      for (const evt of (data.arrivals || []).slice().reverse()) {
+        arrivalBox.insertAdjacentHTML('beforeend', arrivalRow(evt));
+      }
+
+      for (const h of data.hospitals || []) {
+        if (h.lat == null || h.lon == null) continue;
+        if (hospitalMarkers.has(h.id)) continue;
+        const hm = L.marker([h.lat, h.lon], {
+          icon: L.divIcon({ className: '', html: hospitalHtml(), iconSize: [20, 20] })
+        }).addTo(map);
+        hm.bindPopup(`hospital=${h.name || h.id}`);
+        hospitalMarkers.set(h.id, hm);
+      }
+
+      const signalSeen = new Set();
+      for (const sig of data.signals || []) {
+        if (sig.lat == null || sig.lon == null) continue;
+        signalSeen.add(sig.id);
+        let c = signalMarkers.get(sig.id);
+        const clr = signalColor(sig.color);
+        if (!c) {
+          c = L.circleMarker([sig.lat, sig.lon], { radius: sig.preempted ? 7 : 5, color: '#fff', weight: 1, fillColor: clr, fillOpacity: 0.85 }).addTo(map);
+          signalMarkers.set(sig.id, c);
+        }
+        c.setLatLng([sig.lat, sig.lon]);
+        c.setStyle({ fillColor: clr, radius: sig.preempted ? 7 : 5, fillOpacity: 0.85 });
+        if (sig.preempted) {
+          pulsingSignals.add(sig.id);
+          let halo = signalHalos.get(sig.id);
+          if (!halo) {
+            halo = L.circleMarker([sig.lat, sig.lon], {
+              radius: 10,
+              color: clr,
+              weight: 2,
+              opacity: 0.25,
+              fillColor: clr,
+              fillOpacity: 0.12,
+              interactive: false
+            }).addTo(map);
+            signalHalos.set(sig.id, halo);
+            halo.bringToBack();
+          }
+          halo.setLatLng([sig.lat, sig.lon]);
+          halo.setStyle({ color: clr, fillColor: clr });
+        } else {
+          pulsingSignals.delete(sig.id);
+          const halo = signalHalos.get(sig.id);
+          if (halo) {
+            map.removeLayer(halo);
+            signalHalos.delete(sig.id);
+          }
+        }
+        c.bindPopup(`signal=${sig.id}<br>color=${sig.color}<br>preempted=${sig.preempted}<br>owner=${sig.owner || 'n/a'}`);
+      }
+
+      for (const [id, c] of signalMarkers.entries()) {
+        if (!signalSeen.has(id)) {
+          pulsingSignals.delete(id);
+          const halo = signalHalos.get(id);
+          if (halo) {
+            map.removeLayer(halo);
+            signalHalos.delete(id);
+          }
+          map.removeLayer(c);
+          signalMarkers.delete(id);
+        }
+      }
+    }
+
+    startSignalPulseLoop();
+    setInterval(tick, 1000);
+    tick();
+  </script>
+</body>
+</html>

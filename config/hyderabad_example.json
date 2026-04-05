@@ -1,0 +1,24 @@
+{
+  "siren_threshold": 0.72,
+  "min_siren_hits": 3,
+  "wireless_grace_seconds": 4.0,
+  "confirmation_cooldown_seconds": 8.0,
+  "lookahead_m": 400.0,
+  "hold_green_s": 20.0,
+  "restore_after_s": 22.0,
+  "preemption_phases": {},
+  "hospital_edge_map": {
+    "vikram_hospitals": "-308225003#2",
+    "image_hospitals": "-563566157#1",
+    "apollo_dental_clinic_hitech_city": "-420247496",
+    "maxcure_suyosha_woman_child_hospital": "-419863070#1",
+    "oakridge_hospitals": "-31521830#0",
+    "srinivasa_hospital": "354536777#2",
+    "lifespan_hospitals": "-29416702#3",
+    "samanta_homeopathy": "172812678#12",
+    "hegde_hospital": "-354533412#0",
+    "medicover": "28656749#4",
+    "pace_hospitals": "1320062054",
+    "hospitalway_642171981": "68883446"
+  }
+}
