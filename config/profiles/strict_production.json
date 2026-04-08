@@ -16,6 +16,10 @@
     "lookahead_m": 500.0,
     "hold_green_s": 24.0,
     "restore_after_s": 26.0,
+    "all_red_s": 8.0,
+    "min_dynamic_green_s": 12.0,
+    "max_dynamic_green_s": 55.0,
+    "queue_gain_s": 2.0,
     "max_owner_hold_s": 35.0,
     "min_switch_interval_s": 5.0
   },

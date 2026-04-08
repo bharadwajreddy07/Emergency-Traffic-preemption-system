@@ -3,334 +3,936 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Emergency Corridor Operations Center</title>
+  <title>Emergency Mobility Command</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     :root {
-      --bg: #0b1020;
-      --panel: #10192f;
-      --card: #0f172a;
-      --border: #22304e;
-      --text: #dbe7ff;
-      --muted: #8ea0c6;
-      --ok: #22c55e;
-      --warn: #f59e0b;
-      --err: #ef4444;
-      --accent: #38bdf8;
+      --bg: #eef5fb;
+      --panel: #ffffff;
+      --line: #d7e4f1;
+      --ink: #0f172a;
+      --muted: #5b7089;
+      --accent: #0284c7;
+      --ok: #16a34a;
+      --warn: #d97706;
+      --bad: #dc2626;
     }
-    html, body { margin: 0; height: 100%; background: radial-gradient(1200px 700px at 10% -20%, #1d2a48 0%, var(--bg) 55%); color: var(--text); font-family: "Segoe UI", Tahoma, sans-serif; }
-    .layout { display: grid; grid-template-columns: 390px 1fr; height: 100%; }
-    .sidebar { background: linear-gradient(180deg, #0a1327, var(--panel)); border-right: 1px solid var(--border); padding: 14px; overflow: auto; }
-    .title { font-size: 20px; font-weight: 700; }
-    .subtitle { margin-top: 4px; color: var(--muted); font-size: 12px; }
-    .grid { margin-top: 12px; display: grid; gap: 10px; grid-template-columns: repeat(2, 1fr); }
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 10px; }
-    .metric { font-size: 24px; font-weight: 700; }
-    .label { font-size: 12px; color: var(--muted); }
-    .section { margin-top: 12px; }
-    .section h3 { margin: 0 0 8px; font-size: 14px; color: #bfdbfe; }
-    .list { max-height: 28vh; overflow: auto; display: grid; gap: 8px; }
-    .row { border: 1px solid var(--border); border-radius: 10px; padding: 8px; background: #0a142b; }
-    .id { color: #fecaca; font-weight: 700; }
-    .status { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
-    .status.enroute { color: var(--accent); }
-    .status.reached { color: var(--ok); }
-    .status.breakdown { color: var(--err); }
+    html, body, #root { margin: 0; height: 100%; background: radial-gradient(1200px 700px at -10% -20%, #d8efff 0%, var(--bg) 45%, #eaf2fa 100%); color: var(--ink); font-family: "Trebuchet MS", "Segoe UI", sans-serif; }
+    .layout { display: grid; grid-template-columns: 430px 1fr; height: 100%; }
+    .side { overflow: auto; border-right: 1px solid var(--line); background: linear-gradient(180deg, #f8fcff, #edf4fb); padding: 12px; }
+    .title { font-size: 22px; font-weight: 900; color: #0a4d71; }
+    .subtitle { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .kpiGrid { margin-top: 10px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+    .kpiLabel { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+    .kpiVal { font-size: 26px; font-weight: 800; color: #0e3f60; }
+    .card { margin-top: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+    .card h3 { margin: 0 0 8px; font-size: 14px; color: #0c4a6e; }
+    .field { width: 100%; box-sizing: border-box; border: 1px solid #c8d9ea; border-radius: 8px; padding: 8px; background: #fbfdff; color: #102a43; margin-top: 6px; }
+    .btn { margin-top: 8px; width: 100%; border: 0; border-radius: 8px; padding: 10px; font-weight: 800; color: #fff; background: linear-gradient(90deg, #0284c7, #0ea5e9); cursor: pointer; }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btnGhost { margin-top: 8px; width: 100%; border: 1px solid #9db8cf; border-radius: 8px; padding: 10px; font-weight: 800; color: #12405d; background: #f4faff; cursor: pointer; }
+    .tabs { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .tab { border: 1px solid #bfd3e7; background: #f5fbff; color: #1b4b68; font-weight: 800; border-radius: 9px; padding: 8px; cursor: pointer; }
+    .tab.active { background: linear-gradient(90deg, #0369a1, #0284c7); color: #fff; border-color: #0369a1; }
+    .note { margin-top: 6px; border: 1px solid #d7e4f1; border-radius: 10px; background: #fbfdff; padding: 8px; font-size: 12px; }
+    .hint { font-size: 11px; color: var(--muted); }
+    .list { max-height: 22vh; overflow: auto; display: grid; gap: 6px; }
+    .row { border: 1px solid #dce8f5; border-radius: 10px; padding: 8px; background: #fbfdff; font-size: 12px; }
+    .id { font-weight: 800; color: #0b4f75; }
+    .rowTitle { font-weight: 800; color: #0b4f75; margin-bottom: 2px; }
+    .rowMeta { color: #40586f; font-size: 11px; }
+    .feedLine { display: flex; justify-content: space-between; border-bottom: 1px dashed #d9e7f5; padding: 5px 0; font-size: 12px; }
+    .feedLine:last-child { border-bottom: 0; }
+    .badge { border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 800; }
+    .ok { background: #e8fbef; color: #137333; }
+    .warn { background: #fff5e8; color: #b45309; }
+    .bad { background: #ffe9ee; color: #be123c; }
     #map { height: 100%; }
-    .legend {
-      position: absolute; left: 410px; bottom: 14px; z-index: 1000;
-      background: rgba(5,10,22,0.92); border: 1px solid var(--border);
-      border-radius: 10px; padding: 10px; font-size: 12px;
-    }
-    .chip { display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; }
+    .legend { position: absolute; left: 446px; bottom: 10px; z-index: 1000; border: 1px solid var(--line); background: rgba(255,255,255,0.95); border-radius: 10px; padding: 8px; font-size: 11px; color: #15374f; }
+    .chip { display: inline-flex; gap: 5px; align-items: center; margin-right: 8px; }
     .dot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid #fff; }
-    .toast-wrap { position: fixed; right: 14px; top: 14px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
-    .toast { background: #081329; border: 1px solid var(--border); border-radius: 10px; min-width: 280px; padding: 10px 12px; box-shadow: 0 10px 34px rgba(0,0,0,0.35); }
-    .toast.reached { border-color: var(--ok); }
-    .toast.breakdown { border-color: var(--err); }
+    .toastWrap { position: fixed; right: 12px; top: 12px; z-index: 9999; display: grid; gap: 6px; }
+    .toast { border: 1px solid #cfe1f3; border-radius: 10px; background: #fff; padding: 8px 10px; min-width: 240px; font-size: 12px; box-shadow: 0 10px 20px rgba(10, 77, 113, 0.08); }
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .side { height: 60vh; border-right: 0; border-bottom: 1px solid var(--line); }
+      #map { height: 40vh; }
+      .legend { left: 10px; }
+    }
   </style>
 </head>
 <body>
-  <div id="toasts" class="toast-wrap"></div>
-  <div class="layout">
-    <aside class="sidebar">
-      <div class="title">Emergency Corridor Operations Center</div>
-      <div class="subtitle">Realtime fleet + traffic signal intelligence</div>
-
-      <div class="grid">
-        <div class="card"><div class="label">Simulation Time</div><div id="time" class="metric">0.0s</div></div>
-        <div class="card"><div class="label">Active Ambulances</div><div id="active" class="metric">0</div></div>
-        <div class="card"><div class="label">Preempted Signals</div><div id="preempted" class="metric">0</div></div>
-        <div class="card"><div class="label">Arrivals</div><div id="arrivalsCount" class="metric">0</div></div>
-        <div class="card"><div class="label">Trigger Confidence</div><div id="triggerConfidence" class="metric">0.000</div></div>
-        <div class="card"><div class="label">Police Alerts</div><div id="policeCount" class="metric">0</div></div>
-      </div>
-
-      <div class="section">
-        <h3>Fleet Status</h3>
-        <div id="fleet" class="list"></div>
-      </div>
-
-      <div class="section">
-        <h3>Arrival Timeline (ETA/Elapsed)</h3>
-        <div id="arrivals" class="list"></div>
-      </div>
-
-      <div class="section">
-        <h3>Selected Corridor TLS</h3>
-        <div id="corridorTls" class="list"></div>
-      </div>
-
-      <div class="section">
-        <h3>Police Notification Status</h3>
-        <div id="policeLog" class="list"></div>
-      </div>
-    </aside>
-    <main id="map"></main>
-  </div>
-
-  <div class="legend">
-    <div><strong>Map Legend</strong></div>
-    <div class="chip"><span class="dot" style="background:#38bdf8"></span>Ambulance Enroute</div>
-    <div class="chip"><span class="dot" style="background:#22c55e"></span>Ambulance Reached</div>
-    <div class="chip"><span class="dot" style="background:#dc2626"></span>Ambulance Breakdown</div>
-    <div class="chip"><span style="color:#ef4444;font-weight:700">✚</span> Hospital</div>
-    <div class="chip"><span class="dot" style="background:#22c55e"></span>Signal Green</div>
-    <div class="chip"><span class="dot" style="background:#f59e0b"></span>Signal Yellow/Orange</div>
-    <div class="chip"><span class="dot" style="background:#ef4444"></span>Signal Red</div>
-  </div>
-
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script>
-    const map = L.map('map', { zoomControl: true }).setView([17.4435, 78.3850], 14);
+  <script type="text/babel" data-presets="env,react">
+    const { useEffect, useMemo, useRef, useState } = React;
 
-    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: 'OSM' });
-    const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20, attribution: 'Carto' });
-    const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri' });
-    osm.addTo(map);
-    L.control.layers({ 'Road (OSM)': osm, 'Dark': dark, 'Satellite (Flyover Check)': satellite }, {}).addTo(map);
-
-    const markers = new Map();
-    const signalMarkers = new Map();
-    const signalHalos = new Map();
-    const pulsingSignals = new Set();
-    const hospitalMarkers = new Map();
-    const prevStatusById = new Map();
-
-    function startSignalPulseLoop() {
-      function frame(nowMs) {
-        const t = nowMs / 1000;
-        const radius = 6.5 + Math.sin(t * 6.0) * 1.8;
-        const opacity = 0.60 + (Math.sin(t * 6.0) + 1.0) * 0.12;
-        const haloRadius = 10 + (Math.sin(t * 3.0) + 1.0) * 4.5;
-        const haloOpacity = 0.18 + (Math.sin(t * 3.0) + 1.0) * 0.08;
-        for (const id of pulsingSignals) {
-          const marker = signalMarkers.get(id);
-          if (!marker) continue;
-          marker.setStyle({ radius, fillOpacity: opacity });
-
-          const halo = signalHalos.get(id);
-          if (halo) {
-            halo.setStyle({ radius: haloRadius, opacity: haloOpacity, fillOpacity: 0.04 + haloOpacity * 0.4 });
-          }
-        }
-        window.requestAnimationFrame(frame);
-      }
-      window.requestAnimationFrame(frame);
+    function ageBadgeClass(age) {
+      if (age == null) return "warn";
+      if (age <= 4) return "ok";
+      if (age <= 12) return "warn";
+      return "bad";
     }
 
-    function markerHtml(status) {
-      const color = status === 'breakdown' ? '#dc2626' : (status === 'reached' ? '#22c55e' : '#38bdf8');
-      return `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #fff;"></div>`;
+    function kmDistance(aLat, aLon, bLat, bLon) {
+      const r = Math.PI / 180;
+      const dLat = (bLat - aLat) * r;
+      const dLon = (bLon - aLon) * r;
+      const x = Math.sin(dLat / 2) ** 2 + Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(dLon / 2) ** 2;
+      return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
     }
 
-    function hospitalHtml() {
-      return `<div style="width:18px;height:18px;border-radius:9px;background:#fff;border:2px solid #ef4444;color:#ef4444;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:13px;line-height:1;">✚</div>`;
-    }
-
-    function signalColor(color) {
-      if (color === 'green') return '#22c55e';
-      if (color === 'yellow/orange') return '#f59e0b';
-      return '#ef4444';
-    }
-
-    function pushToast(text, cls) {
-      const wrap = document.getElementById('toasts');
-      const node = document.createElement('div');
-      node.className = `toast ${cls || ''}`;
-      node.textContent = text;
-      wrap.appendChild(node);
-      setTimeout(() => node.remove(), 6000);
-    }
-
-    function fleetRow(amb) {
-      return `<div class="row"><div class="id">${amb.id}</div><div>hospital: ${amb.hospital_name || 'n/a'}</div><div>eta: ${amb.eta_seconds ?? 'n/a'} s</div><div>reroute: ${amb.reroute_reason || 'n/a'}</div><div>police: ${amb.police_notification_status || 'pending'}</div><div>speed: ${amb.speed_kmh} km/h</div><div class="status ${amb.status}">${amb.status}</div></div>`;
-    }
-
-    function arrivalRow(evt) {
-      return `<div class="row"><div class="id">${evt.vehicle_id}</div><div>hospital: ${evt.hospital_name}</div><div>t: ${evt.timestamp}s</div><div>elapsed: ${evt.elapsed_seconds}s</div></div>`;
-    }
-
-    function corridorTlsRow(tlsId) {
-      return `<div class="row"><div class="id">${tlsId}</div><div>status: green corridor selected</div></div>`;
-    }
-
-    function policeRow(evt) {
-      const tlsText = (evt.corridor_tls || []).join(', ') || 'n/a';
-      return `<div class="row"><div class="id">${evt.vehicle_id}</div><div>status: ${evt.status}</div><div>reroute: ${evt.reroute_reason || 'n/a'}</div><div>corridor TLS: ${tlsText}</div><div>t: ${evt.timestamp}s</div></div>`;
-    }
-
-    async function tick() {
-      let data = {
+    function App() {
+      const [data, setData] = useState({
         timestamp: 0,
         active_ambulances: 0,
         active_tls_preempted: 0,
         ambulances: [],
-        arrivals: [],
-        signals: [],
         hospitals: [],
-        trigger: { confidence: 0.0, confirmed: false, sources: [] },
-        selected_corridor_tls: [],
-        police_notifications: []
-      };
-      try {
-        const res = await fetch('/api/state', { cache: 'no-store' });
-        data = await res.json();
-      } catch {}
+        signals: [],
+        calls: [],
+        call_markers: [],
+        police_notifications: [],
+        trigger: { confidence: 0 },
+        live_feeds: { traffic_edges: 0, traffic_age_s: null, lora_events: 0, lora_age_s: null },
+        corridor_source: "none",
+        planned_corridor_mode: "strict"
+      });
 
-      document.getElementById('time').textContent = `${(data.timestamp || 0).toFixed(1)}s`;
-      document.getElementById('active').textContent = data.active_ambulances || 0;
-      document.getElementById('preempted').textContent = data.active_tls_preempted || 0;
-      document.getElementById('arrivalsCount').textContent = (data.arrivals || []).length;
-      document.getElementById('triggerConfidence').textContent = Number(data.trigger?.confidence || 0).toFixed(3);
-      document.getElementById('policeCount').textContent = (data.police_notifications || []).length;
+      const [callerName, setCallerName] = useState("citizen");
+      const [emergencyType, setEmergencyType] = useState("trauma");
+      const [callLat, setCallLat] = useState("");
+      const [callLon, setCallLon] = useState("");
+      const [preferredHospital, setPreferredHospital] = useState("");
+      const [sending, setSending] = useState(false);
+      const [toasts, setToasts] = useState([]);
+      const [userName, setUserName] = useState("citizen_user");
+      const [userPassword, setUserPassword] = useState("user123");
+      const [userToken, setUserToken] = useState("");
+      const [userProfile, setUserProfile] = useState(null);
+      const [activeTab, setActiveTab] = useState("ops");
+      const [policeUser, setPoliceUser] = useState("traffic_police");
+      const [policePassword, setPolicePassword] = useState("police123");
+      const [policeToken, setPoliceToken] = useState("");
+      const [policeProfile, setPoliceProfile] = useState(null);
+      const [resettingAmbulances, setResettingAmbulances] = useState(false);
+      const [policeFeed, setPoliceFeed] = useState([]);
+      const [policeOverview, setPoliceOverview] = useState({
+        active_ambulances: 0,
+        active_tls_preempted: 0,
+        calls: [],
+        call_markers: [],
+        active_dispatch: [],
+        notifications: [],
+        planned_corridor_tls: [],
+        planned_corridor_mode: "strict",
+        corridor_source: "none",
+        trigger: { confidence: 0 },
+      });
 
-      const seen = new Set();
-      const fleet = document.getElementById('fleet');
-      fleet.innerHTML = '';
+      const mapRef = useRef(null);
+      const mapElRef = useRef(null);
+      const ambulanceMarkers = useRef(new Map());
+      const hospitalMarkers = useRef(new Map());
+      const signalMarkers = useRef(new Map());
+      const signalHalos = useRef(new Map());
+      const pulsingSignals = useRef(new Set());
+      const callMarkers = useRef(new Map());
+      const routeLines = useRef(new Map());
+      const travelledTrailByAmbulance = useRef(new Map());
+      const travelledLines = useRef(new Map());
+      const phaseTrailByAmbulance = useRef(new Map());
+      const phaseLinesByAmbulance = useRef(new Map());
+      const corridorLine = useRef(null);
 
-      for (const amb of data.ambulances || []) {
-        seen.add(amb.id);
-        fleet.insertAdjacentHTML('beforeend', fleetRow(amb));
+      const nearestHospitals = useMemo(() => {
+        const lat = Number(callLat);
+        const lon = Number(callLon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return [];
+        return (data.hospitals || [])
+          .filter(h => h.lat != null && h.lon != null)
+          .map(h => ({ ...h, d: kmDistance(lat, lon, Number(h.lat), Number(h.lon)) }))
+          .sort((a, b) => a.d - b.d)
+          .slice(0, 6);
+      }, [callLat, callLon, data.hospitals]);
 
-        const prev = prevStatusById.get(amb.id);
-        if (prev && prev !== amb.status) {
-          if (amb.status === 'reached') {
-            const next = (data.ambulances || []).find(a => a.status === 'enroute');
-            const nextText = next ? ` Next: ${next.id} -> ${next.hospital_name || 'nearest hospital'}` : '';
-            pushToast(`${amb.id} reached hospital.${nextText}`, 'reached');
+      function pushToast(text) {
+        const id = Date.now() + Math.random();
+        setToasts(prev => [...prev, { id, text }]);
+        setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 6000);
+      }
+
+      async function fetchState() {
+        try {
+          const res = await fetch("/api/state", { cache: "no-store" });
+          const body = await res.json();
+          setData(body || {});
+        } catch (e) {
+        }
+      }
+
+      async function userLogin() {
+        try {
+          const res = await fetch("/api/user/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: userName, password: userPassword }),
+          });
+          const body = await res.json();
+          if (!body.ok || !body.token) {
+            pushToast(`User login failed: ${body.error || "invalid"}`);
+            return;
           }
-          if (amb.status === 'breakdown') {
-            pushToast(`${amb.id} marked breakdown`, 'breakdown');
+          setUserToken(body.token);
+          setUserProfile(body.user || null);
+          localStorage.setItem("appUserAuthToken", body.token);
+          if (body.user?.username && (!callerName || callerName === "citizen")) {
+            setCallerName(body.user.username);
+          }
+          pushToast("User login successful");
+        } catch (e) {
+          pushToast("User login API unreachable");
+        }
+      }
+
+      function useCurrentLocation() {
+        if (!navigator.geolocation) {
+          pushToast("Geolocation not supported by this browser");
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          pos => {
+            const lat = Number(pos.coords.latitude).toFixed(6);
+            const lon = Number(pos.coords.longitude).toFixed(6);
+            setCallLat(lat);
+            setCallLon(lon);
+            if (mapRef.current) {
+              mapRef.current.setView([Number(lat), Number(lon)], 15);
+            }
+            pushToast("Current location captured");
+          },
+          err => {
+            pushToast(`Location permission denied/unavailable: ${err.message}`);
+          },
+          { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+        );
+      }
+
+      async function policeLogin() {
+        try {
+          const res = await fetch("/api/police/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: policeUser, password: policePassword }),
+          });
+          const body = await res.json();
+          if (!body.ok || !body.token) {
+            pushToast(`Police login failed: ${body.error || "invalid"}`);
+            return;
+          }
+          setPoliceToken(body.token);
+          setPoliceProfile(body.user || null);
+          localStorage.setItem("policeAuthToken", body.token);
+          pushToast("Traffic police login successful");
+        } catch (e) {
+          pushToast("Police login API unreachable");
+        }
+      }
+
+      async function fetchPoliceNotifications(token = policeToken) {
+        if (!token) return;
+        try {
+          const res = await fetch("/api/police/overview", {
+            cache: "no-store",
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const body = await res.json();
+          if (!body.ok) {
+            if (res.status === 401) {
+              setPoliceToken("");
+              setPoliceProfile(null);
+              setPoliceOverview({
+                active_ambulances: 0,
+                active_tls_preempted: 0,
+                calls: [],
+                call_markers: [],
+                active_dispatch: [],
+                notifications: [],
+                planned_corridor_tls: [],
+                planned_corridor_mode: "strict",
+                corridor_source: "none",
+                trigger: { confidence: 0 },
+              });
+              localStorage.removeItem("policeAuthToken");
+              pushToast("Police session expired. Please login again.");
+            }
+            return;
+          }
+          setPoliceFeed(body.notifications || []);
+          setPoliceOverview(body || {});
+        } catch (e) {
+        }
+      }
+
+      useEffect(() => {
+        const userCachedToken = localStorage.getItem("appUserAuthToken") || "";
+        if (userCachedToken) {
+          setUserToken(userCachedToken);
+          setUserProfile({ username: userName, role: "user" });
+          if (!callerName || callerName === "citizen") {
+            setCallerName(userName);
           }
         }
-        prevStatusById.set(amb.id, amb.status);
-
-        let m = markers.get(amb.id);
-        if (!m) {
-          m = L.marker([amb.lat, amb.lon], {
-            icon: L.divIcon({ className: '', html: markerHtml(amb.status), iconSize: [18, 18] })
-          }).addTo(map);
-          markers.set(amb.id, m);
+        const cachedToken = localStorage.getItem("policeAuthToken") || "";
+        if (cachedToken) {
+          setPoliceToken(cachedToken);
+          setPoliceProfile({ username: policeUser, role: "traffic_police" });
         }
-        m.setLatLng([amb.lat, amb.lon]);
-        m.setIcon(L.divIcon({ className: '', html: markerHtml(amb.status), iconSize: [18, 18] }));
-        m.bindPopup(`${amb.id}<br>status=${amb.status}<br>speed=${amb.speed_kmh} km/h<br>hospital=${amb.hospital_name || 'n/a'}<br>eta=${amb.eta_seconds ?? 'n/a'}s`);
-      }
+      }, []);
 
-      for (const [id, m] of markers.entries()) {
-        if (!seen.has(id)) {
-          map.removeLayer(m);
-          markers.delete(id);
+      useEffect(() => {
+        fetchState();
+        const id = setInterval(fetchState, 1000);
+        return () => clearInterval(id);
+      }, []);
+
+      useEffect(() => {
+        if (!policeToken) return;
+        fetchPoliceNotifications(policeToken);
+        const id = setInterval(() => fetchPoliceNotifications(policeToken), 2000);
+        return () => clearInterval(id);
+      }, [policeToken]);
+
+      useEffect(() => {
+        if (mapRef.current) return;
+        const map = L.map(mapElRef.current, { zoomControl: true }).setView([17.4435, 78.385], 14);
+        const road = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 20, attribution: "OSM" });
+        const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { maxZoom: 20, attribution: "Carto" });
+        const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Esri" });
+        road.addTo(map);
+        L.control.layers({ "Road": road, "Dark": dark, "Satellite": sat }, {}).addTo(map);
+        map.on("click", e => {
+          setCallLat(Number(e.latlng.lat).toFixed(6));
+          setCallLon(Number(e.latlng.lng).toFixed(6));
+        });
+        mapRef.current = map;
+      }, []);
+
+      useEffect(() => {
+        const map = mapRef.current;
+        if (!map) return;
+
+        const ambSeen = new Set();
+        const markerHtml = status => {
+          const color = status === "breakdown" ? "#f43f5e" : status === "reached" ? "#22c55e" : "#0ea5e9";
+          return `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #fff"></div>`;
+        };
+
+        for (const amb of data.ambulances || []) {
+          if (amb.lat == null || amb.lon == null) continue;
+          ambSeen.add(amb.id);
+          let m = ambulanceMarkers.current.get(amb.id);
+          if (!m) {
+            m = L.marker([amb.lat, amb.lon], { icon: L.divIcon({ className: "", html: markerHtml(amb.status), iconSize: [18, 18] }) }).addTo(map);
+            ambulanceMarkers.current.set(amb.id, m);
+          }
+          m.setLatLng([amb.lat, amb.lon]);
+          m.setIcon(L.divIcon({ className: "", html: markerHtml(amb.status), iconSize: [18, 18] }));
+          m.bindPopup(
+            `${amb.id}<br/>status=${amb.status}<br/>phase=${amb.mission_phase || "idle"}<br/>hospital=${amb.hospital_name || "n/a"}` +
+            `<br/>home=${amb.home_hospital_name || amb.home_hospital_id || "n/a"}<br/>driver=${amb.driver_name || "n/a"}` +
+            `<br/>return=${amb.return_hospital_name || amb.return_hospital_id || "n/a"}<br/>route=${amb.route_source || "none"}` +
+            `<br/>phone=${amb.driver_phone || "n/a"}<br/>eta=${amb.eta_seconds ?? "n/a"}s`
+          );
+
+          const p = [Number(amb.lat), Number(amb.lon)];
+          let bundle = phaseTrailByAmbulance.current.get(amb.id);
+          if (!bundle) {
+            bundle = { to_incident: [], to_hospital: [] };
+          }
+          const phase = String(amb.mission_phase || "idle");
+          if (phase === "to_incident" || phase === "to_hospital") {
+            const activeTrail = bundle[phase];
+            const last = activeTrail.length ? activeTrail[activeTrail.length - 1] : null;
+            if (!last || Math.abs(last[0] - p[0]) > 0.00001 || Math.abs(last[1] - p[1]) > 0.00001) {
+              activeTrail.push(p);
+              if (activeTrail.length > 260) activeTrail.shift();
+            }
+          }
+          phaseTrailByAmbulance.current.set(amb.id, bundle);
+
+          let lines = phaseLinesByAmbulance.current.get(amb.id);
+          if (!lines) {
+            lines = { to_incident: null, to_hospital: null };
+          }
+
+          if (bundle.to_incident.length >= 2) {
+            if (!lines.to_incident) {
+              lines.to_incident = L.polyline(bundle.to_incident, {
+                color: "#2563eb",
+                weight: 4,
+                opacity: 0.86,
+                lineCap: "round",
+                lineJoin: "round",
+              }).addTo(map);
+            } else {
+              lines.to_incident.setLatLngs(bundle.to_incident);
+            }
+          }
+
+          if (bundle.to_hospital.length >= 2) {
+            if (!lines.to_hospital) {
+              lines.to_hospital = L.polyline(bundle.to_hospital, {
+                color: "#16a34a",
+                weight: 4,
+                opacity: 0.86,
+                lineCap: "round",
+                lineJoin: "round",
+              }).addTo(map);
+            } else {
+              lines.to_hospital.setLatLngs(bundle.to_hospital);
+            }
+          }
+
+          phaseLinesByAmbulance.current.set(amb.id, lines);
         }
-      }
 
-      const arrivalBox = document.getElementById('arrivals');
-      arrivalBox.innerHTML = '';
-      for (const evt of (data.arrivals || []).slice().reverse()) {
-        arrivalBox.insertAdjacentHTML('beforeend', arrivalRow(evt));
-      }
-
-      const corridorBox = document.getElementById('corridorTls');
-      corridorBox.innerHTML = '';
-      for (const tlsId of (data.selected_corridor_tls || [])) {
-        corridorBox.insertAdjacentHTML('beforeend', corridorTlsRow(tlsId));
-      }
-
-      const policeBox = document.getElementById('policeLog');
-      policeBox.innerHTML = '';
-      for (const evt of (data.police_notifications || []).slice().reverse()) {
-        policeBox.insertAdjacentHTML('beforeend', policeRow(evt));
-      }
-
-      for (const h of data.hospitals || []) {
-        if (h.lat == null || h.lon == null) continue;
-        if (hospitalMarkers.has(h.id)) continue;
-        const hm = L.marker([h.lat, h.lon], {
-          icon: L.divIcon({ className: '', html: hospitalHtml(), iconSize: [20, 20] })
-        }).addTo(map);
-        hm.bindPopup(`hospital=${h.name || h.id}`);
-        hospitalMarkers.set(h.id, hm);
-      }
-
-      const signalSeen = new Set();
-      for (const sig of data.signals || []) {
-        if (sig.lat == null || sig.lon == null) continue;
-        signalSeen.add(sig.id);
-        let c = signalMarkers.get(sig.id);
-        const clr = signalColor(sig.color);
-        if (!c) {
-          c = L.circleMarker([sig.lat, sig.lon], { radius: sig.preempted ? 7 : 5, color: '#fff', weight: 1, fillColor: clr, fillOpacity: 0.85 }).addTo(map);
-          signalMarkers.set(sig.id, c);
+        for (const [id, marker] of ambulanceMarkers.current.entries()) {
+          if (!ambSeen.has(id)) {
+            map.removeLayer(marker);
+            ambulanceMarkers.current.delete(id);
+            travelledTrailByAmbulance.current.delete(id);
+            const oldLines = phaseLinesByAmbulance.current.get(id);
+            if (oldLines?.to_incident) map.removeLayer(oldLines.to_incident);
+            if (oldLines?.to_hospital) map.removeLayer(oldLines.to_hospital);
+            phaseLinesByAmbulance.current.delete(id);
+            phaseTrailByAmbulance.current.delete(id);
+          }
         }
-        c.setLatLng([sig.lat, sig.lon]);
-        c.setStyle({ fillColor: clr, radius: sig.preempted ? 7 : 5, fillOpacity: 0.85 });
-        if (sig.preempted) {
-          pulsingSignals.add(sig.id);
-          let halo = signalHalos.get(sig.id);
-          if (!halo) {
-            halo = L.circleMarker([sig.lat, sig.lon], {
-              radius: 10,
-              color: clr,
-              weight: 2,
-              opacity: 0.25,
-              fillColor: clr,
-              fillOpacity: 0.12,
-              interactive: false
+
+        const hospitalHtml = "<div style='width:18px;height:18px;border-radius:9px;background:#fff;border:2px solid #dc2626;color:#dc2626;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:12px;line-height:1'>✚</div>";
+        for (const h of data.hospitals || []) {
+          if (h.lat == null || h.lon == null || hospitalMarkers.current.has(h.id)) continue;
+          const hm = L.marker([h.lat, h.lon], { icon: L.divIcon({ className: "", html: hospitalHtml, iconSize: [20, 20] }) }).addTo(map);
+          hm.bindPopup(`hospital=${h.name || h.id}`);
+          hospitalMarkers.current.set(h.id, hm);
+        }
+
+        const sigSeen = new Set();
+        const plannedCorridorSet = new Set(data.planned_corridor_tls || []);
+        for (const sig of data.signals || []) {
+          if (sig.lat == null || sig.lon == null) continue;
+          sigSeen.add(sig.id);
+          const isPlanned = plannedCorridorSet.has(sig.id);
+          const baseClr = sig.color === "green" ? "#22c55e" : sig.color === "yellow/orange" ? "#f59e0b" : "#ef4444";
+          const clr = (!sig.preempted && isPlanned) ? "#3b82f6" : baseClr;
+          let c = signalMarkers.current.get(sig.id);
+          if (!c) {
+            c = L.circleMarker([sig.lat, sig.lon], { radius: sig.preempted ? 7 : 5, color: "#fff", weight: 1, fillColor: clr, fillOpacity: 0.85 }).addTo(map);
+            signalMarkers.current.set(sig.id, c);
+          }
+          c.setLatLng([sig.lat, sig.lon]);
+          c.setStyle({ fillColor: clr, radius: sig.preempted ? 7 : 5, fillOpacity: 0.85 });
+          c.bindPopup(`signal=${sig.id}<br/>color=${sig.color}<br/>preempted=${sig.preempted}<br/>planned=${isPlanned}<br/>owner=${sig.owner || "n/a"}`);
+
+          if (sig.preempted) {
+            pulsingSignals.current.add(sig.id);
+            let halo = signalHalos.current.get(sig.id);
+            if (!halo) {
+              halo = L.circleMarker([sig.lat, sig.lon], { radius: 10, color: clr, weight: 2, opacity: 0.25, fillColor: clr, fillOpacity: 0.12, interactive: false }).addTo(map);
+              signalHalos.current.set(sig.id, halo);
+              halo.bringToBack();
+            }
+            halo.setLatLng([sig.lat, sig.lon]);
+            halo.setStyle({ color: clr, fillColor: clr });
+          } else {
+            pulsingSignals.current.delete(sig.id);
+            const halo = signalHalos.current.get(sig.id);
+            if (halo) {
+              map.removeLayer(halo);
+              signalHalos.current.delete(sig.id);
+            }
+          }
+        }
+
+        for (const [id, marker] of signalMarkers.current.entries()) {
+          if (!sigSeen.has(id)) {
+            pulsingSignals.current.delete(id);
+            const halo = signalHalos.current.get(id);
+            if (halo) {
+              map.removeLayer(halo);
+              signalHalos.current.delete(id);
+            }
+            map.removeLayer(marker);
+            signalMarkers.current.delete(id);
+          }
+        }
+
+        const routeSeen = new Set();
+        for (const amb of data.ambulances || []) {
+          const pts = Array.isArray(amb.route_preview) ? amb.route_preview : [];
+          if (pts.length < 2) continue;
+          routeSeen.add(amb.id);
+          const phase = String(amb.mission_phase || "idle");
+          const routeColor = phase === "to_hospital" ? "#16a34a" : phase === "to_incident" ? "#2563eb" : "#64748b";
+          const dash = phase === "to_hospital" || phase === "to_incident" ? "10 6" : null;
+          let line = routeLines.current.get(amb.id);
+          if (!line) {
+            line = L.polyline(pts, {
+              color: routeColor,
+              weight: 5,
+              opacity: 0.78,
+              lineCap: "round",
+              lineJoin: "round",
+              dashArray: dash,
             }).addTo(map);
-            signalHalos.set(sig.id, halo);
-            halo.bringToBack();
-          }
-          halo.setLatLng([sig.lat, sig.lon]);
-          halo.setStyle({ color: clr, fillColor: clr });
-        } else {
-          pulsingSignals.delete(sig.id);
-          const halo = signalHalos.get(sig.id);
-          if (halo) {
-            map.removeLayer(halo);
-            signalHalos.delete(sig.id);
+            routeLines.current.set(amb.id, line);
+          } else {
+            line.setLatLngs(pts);
+            line.setStyle({ color: routeColor, dashArray: dash });
           }
         }
-        c.bindPopup(`signal=${sig.id}<br>color=${sig.color}<br>preempted=${sig.preempted}<br>owner=${sig.owner || 'n/a'}`);
+
+        for (const [id, line] of routeLines.current.entries()) {
+          if (!routeSeen.has(id)) {
+            map.removeLayer(line);
+            routeLines.current.delete(id);
+          }
+        }
+
+        const corridorPts = Array.isArray(data.corridor_route) ? data.corridor_route : [];
+        let bestPts = corridorPts;
+        if (bestPts.length < 2 && (data.ambulances || []).length > 0) {
+          const active = (data.ambulances || []).find(a => Array.isArray(a.route_preview) && a.route_preview.length >= 2);
+          if (active) bestPts = active.route_preview;
+        }
+        if (bestPts.length >= 2) {
+          if (!corridorLine.current) {
+            corridorLine.current = L.polyline(bestPts, {
+              color: "#22c55e",
+              weight: 7,
+              opacity: 0.6,
+              lineCap: "round",
+              lineJoin: "round",
+              dashArray: "10 8",
+            }).addTo(map);
+          } else {
+            corridorLine.current.setLatLngs(bestPts);
+          }
+          corridorLine.current.bringToFront();
+        } else if (corridorLine.current) {
+          map.removeLayer(corridorLine.current);
+          corridorLine.current = null;
+        }
+
+        const callSeen = new Set();
+        const callerHtml = "<div style='width:18px;height:18px;border-radius:50%;background:#ef4444;border:2px solid #fff;box-shadow:0 0 0 6px rgba(239,68,68,0.22)'></div>";
+        for (const call of data.call_markers || []) {
+          if (call.lat == null || call.lon == null) continue;
+          const callId = String(call.call_id || "");
+          if (!callId) continue;
+          callSeen.add(callId);
+          let cm = callMarkers.current.get(callId);
+          if (!cm) {
+            cm = L.marker([call.lat, call.lon], {
+              icon: L.divIcon({ className: "", html: callerHtml, iconSize: [20, 20] }),
+            }).addTo(map);
+            callMarkers.current.set(callId, cm);
+          }
+          cm.setLatLng([call.lat, call.lon]);
+          cm.bindPopup(`call=${callId}<br/>status=${call.status || "pending_dispatch"}<br/>type=${call.emergency_type || "general"}<br/>assigned=${call.assigned_vehicle || "pending"}`);
+        }
+
+        for (const [id, cm] of callMarkers.current.entries()) {
+          if (!callSeen.has(id)) {
+            map.removeLayer(cm);
+            callMarkers.current.delete(id);
+          }
+        }
+      }, [data]);
+
+      useEffect(() => {
+        let stop = false;
+        const animate = now => {
+          if (stop) return;
+          const t = now / 1000;
+          const r = 6.5 + Math.sin(t * 6.0) * 1.8;
+          const o = 0.62 + (Math.sin(t * 6.0) + 1.0) * 0.11;
+          const hr = 10 + (Math.sin(t * 3.0) + 1.0) * 4.5;
+          const ho = 0.18 + (Math.sin(t * 3.0) + 1.0) * 0.08;
+          for (const id of pulsingSignals.current) {
+            const marker = signalMarkers.current.get(id);
+            if (marker) marker.setStyle({ radius: r, fillOpacity: o });
+            const halo = signalHalos.current.get(id);
+            if (halo) halo.setStyle({ radius: hr, opacity: ho, fillOpacity: 0.04 + ho * 0.35 });
+          }
+          requestAnimationFrame(animate);
+        };
+        requestAnimationFrame(animate);
+        return () => {
+          stop = true;
+        };
+      }, []);
+
+      async function submitCall() {
+        if (!userToken) {
+          pushToast("Please login as app user before raising a call");
+          return;
+        }
+        const lat = Number(callLat);
+        const lon = Number(callLon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          pushToast("Select a valid location from map");
+          return;
+        }
+        setSending(true);
+        try {
+          const payload = {
+            caller_name: callerName || "citizen",
+            emergency_type: emergencyType,
+            preferred_hospital_id: preferredHospital || "",
+            lat,
+            lon,
+          };
+          const res = await fetch("/api/call", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${userToken}`,
+            },
+            body: JSON.stringify(payload),
+          });
+          const body = await res.json();
+          if (!body.ok) {
+            pushToast(`Call failed: ${body.error || "unknown"}`);
+          } else {
+            pushToast(`Call accepted: ${body.call.call_id}`);
+            fetchState();
+          }
+        } catch (e) {
+          pushToast("Call API unreachable");
+        } finally {
+          setSending(false);
+        }
       }
 
-      for (const [id, c] of signalMarkers.entries()) {
-        if (!signalSeen.has(id)) {
-          pulsingSignals.delete(id);
-          const halo = signalHalos.get(id);
-          if (halo) {
-            map.removeLayer(halo);
-            signalHalos.delete(id);
+      async function resetCalledAmbulances() {
+        if (!policeToken) {
+          pushToast("Please login as traffic police before reset");
+          return;
+        }
+        setResettingAmbulances(true);
+        try {
+          const res = await fetch("/api/police/reset-ambulances", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${policeToken}`,
+            },
+            body: JSON.stringify({}),
+          });
+          const body = await res.json();
+          if (!body.ok) {
+            pushToast(`Reset failed: ${body.error || "unknown"}`);
+            return;
           }
-          map.removeLayer(c);
-          signalMarkers.delete(id);
+          pushToast("Called ambulances reset to stationed pool");
+          fetchState();
+          fetchPoliceNotifications(policeToken);
+        } catch (e) {
+          pushToast("Reset API unreachable");
+        } finally {
+          setResettingAmbulances(false);
         }
       }
+
+      const actionableCalls = useMemo(() => {
+        const markers = Array.isArray(data.call_markers) ? data.call_markers : [];
+        return markers
+          .filter(c => ["assigned", "picked_up"].includes(String(c.status || "")))
+          .sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+      }, [data.call_markers]);
+
+      return (
+        <>
+          <div className="toastWrap">
+            {toasts.map(t => <div className="toast" key={t.id}>{t.text}</div>)}
+          </div>
+          <div className="layout">
+            <aside className="side">
+              <div className="title">Emergency Mobility Command</div>
+              <div className="subtitle">Real-time dispatch, green corridor, hospital rerouting</div>
+
+              <div className="kpiGrid">
+                <div className="kpi"><div className="kpiLabel">Simulation Time</div><div className="kpiVal">{Number(data.timestamp || 0).toFixed(1)}s</div></div>
+                <div className="kpi"><div className="kpiLabel">Active Ambulances</div><div className="kpiVal">{data.active_ambulances || 0}</div></div>
+                <div className="kpi"><div className="kpiLabel">Preempted Signals</div><div className="kpiVal">{data.active_tls_preempted || 0}</div></div>
+                <div className="kpi"><div className="kpiLabel">Trigger Confidence</div><div className="kpiVal">{Number(data.trigger?.confidence || 0).toFixed(3)}</div></div>
+              </div>
+
+              <div className="tabs">
+                <button className={`tab ${activeTab === "ops" ? "active" : ""}`} onClick={() => setActiveTab("ops")}>Operations</button>
+                <button className={`tab ${activeTab === "police" ? "active" : ""}`} onClick={() => setActiveTab("police")}>Traffic Police</button>
+              </div>
+
+              {activeTab === "ops" && (
+                <>
+                  <div className="card">
+                    <h3>Realtime Feed Health</h3>
+                    <div className="feedLine"><span>Traffic edges</span><strong>{data.live_feeds?.traffic_edges || 0}</strong></div>
+                    <div className="feedLine"><span>Traffic feed age</span><span className={`badge ${ageBadgeClass(data.live_feeds?.traffic_age_s)}`}>{data.live_feeds?.traffic_age_s == null ? "n/a" : `${data.live_feeds.traffic_age_s}s`}</span></div>
+                    <div className="feedLine"><span>LoRa events</span><strong>{data.live_feeds?.lora_events || 0}</strong></div>
+                    <div className="feedLine"><span>LoRa feed age</span><span className={`badge ${ageBadgeClass(data.live_feeds?.lora_age_s)}`}>{data.live_feeds?.lora_age_s == null ? "n/a" : `${data.live_feeds.lora_age_s}s`}</span></div>
+                  </div>
+
+                  <div className="card">
+                    <h3>Objective Coverage</h3>
+                    <div className="feedLine"><span>Wireless + siren verification</span><span className="badge ok">enabled</span></div>
+                    <div className="feedLine"><span>Immediate green corridor</span><span className="badge ok">enabled</span></div>
+                    <div className="feedLine"><span>Priority for emergency services</span><span className="badge ok">ambulance/fire/police</span></div>
+                    <div className="feedLine"><span>Auto restore normal traffic</span><span className="badge ok">enabled</span></div>
+                    <div className="hint">Coverage reflects your slide objectives: verification, instant corridor, delay reduction, and restore-after-pass.</div>
+                  </div>
+
+                  <div className="card">
+                    <h3>App User Sign In</h3>
+                    {!userToken && (
+                      <>
+                        <input className="field" value={userName} onChange={e => setUserName(e.target.value)} placeholder="Username" />
+                        <input className="field" type="password" value={userPassword} onChange={e => setUserPassword(e.target.value)} placeholder="Password" />
+                        <button className="btn" onClick={userLogin}>Sign In As User</button>
+                        <div className="note">Default user credential: citizen_user / user123</div>
+                      </>
+                    )}
+                    {userToken && (
+                      <>
+                        <div className="note">Signed in as <strong>{userProfile?.username || userName}</strong></div>
+                        <button className="btnGhost" onClick={() => { setUserToken(""); setUserProfile(null); localStorage.removeItem("appUserAuthToken"); }}>Sign Out</button>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="card">
+                    <h3>Emergency Call</h3>
+                    <div className="hint">Click map for location. Preferred hospital options are nearest to that location.</div>
+                    <input className="field" value={callerName} onChange={e => setCallerName(e.target.value)} placeholder="Caller name" />
+                    <select className="field" value={emergencyType} onChange={e => setEmergencyType(e.target.value)}>
+                      <option value="trauma">Trauma</option>
+                      <option value="cardiac">Cardiac</option>
+                      <option value="stroke">Stroke</option>
+                      <option value="fire_truck">Fire Truck</option>
+                      <option value="police_response">Police Response</option>
+                      <option value="general">General</option>
+                    </select>
+                    <input className="field" value={callLat} onChange={e => setCallLat(e.target.value)} placeholder="Latitude" />
+                    <input className="field" value={callLon} onChange={e => setCallLon(e.target.value)} placeholder="Longitude" />
+                    <button className="btnGhost" onClick={useCurrentLocation}>Use My Current Location</button>
+                    <select className="field" value={preferredHospital} onChange={e => setPreferredHospital(e.target.value)}>
+                      <option value="">No preferred hospital</option>
+                      {nearestHospitals.map(h => (
+                        <option key={h.id} value={h.id}>{`${h.name || h.id} (${h.d.toFixed(2)} km)`}</option>
+                      ))}
+                    </select>
+                    <button className="btn" onClick={submitCall} disabled={sending}>{sending ? "Submitting..." : "Raise Ambulance Call"}</button>
+                  </div>
+
+                  <div className="card">
+                    <h3>Fleet</h3>
+                    <div className="list">
+                      {(data.ambulances || []).map(a => (
+                        <div className="row" key={a.id}>
+                          <div className="id">{a.id}</div>
+                          <div>Hospital: {a.hospital_name || "n/a"}</div>
+                          <div>ETA: {a.eta_seconds ?? "n/a"}s</div>
+                          <div>Mission: {a.mission_phase || "idle"}</div>
+                          <div>Driver: {a.driver_name || "n/a"} {a.driver_phone ? `(${a.driver_phone})` : ""}</div>
+                          <div>Reason: {a.reroute_reason || "n/a"}</div>
+                          <div>Police: {a.police_notification_status || "pending"}</div>
+                          <div className={`id`}>Status: <span>{a.status}</span></div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="card">
+                    <h3>Calls Timeline</h3>
+                    <div className="list">
+                      {(data.calls || []).slice().reverse().map(c => (
+                        <div className="row" key={`${c.call_id}_${c.timestamp}`}>
+                          <div className="id">{c.call_id}</div>
+                          <div>Status: {c.status}</div>
+                          <div>Vehicle: {c.assigned_vehicle || "pending"}</div>
+                          <div>Edge: {c.matched_edge || "n/a"}</div>
+                          <div>Location: {(c.lat ?? "n/a")}, {(c.lon ?? "n/a")}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="card">
+                    <h3>Active Calls</h3>
+                    <div className="list">
+                      {actionableCalls.map(c => (
+                        <div className="row" key={`trip_${c.call_id}`}>
+                          <div className="rowTitle">{c.call_id}</div>
+                          <div>Status: {c.status || "assigned"}</div>
+                          <div>Ambulance: {c.assigned_vehicle || "pending"}</div>
+                          <div>Hospital: {c.assigned_hospital_name || c.assigned_hospital_id || "pending"}</div>
+                          <div>Driver: {c.driver_name || "n/a"} {c.driver_phone ? `(${c.driver_phone})` : ""}</div>
+                          <div className="hint">Trip flow is automatic: dispatch to caller, pickup, then closest suitable hospital.</div>
+                        </div>
+                      ))}
+                      {actionableCalls.length === 0 && <div className="hint">No active calls yet.</div>}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {activeTab === "police" && (
+                <>
+                  <div className="card">
+                    <h3>Traffic Police Sign In</h3>
+                    {!policeToken && (
+                      <>
+                        <input className="field" value={policeUser} onChange={e => setPoliceUser(e.target.value)} placeholder="Username" />
+                        <input className="field" type="password" value={policePassword} onChange={e => setPolicePassword(e.target.value)} placeholder="Password" />
+                        <button className="btn" onClick={policeLogin}>Sign In</button>
+                        <div className="note">Default credential for local demo: traffic_police / police123</div>
+                      </>
+                    )}
+                    {policeToken && (
+                      <>
+                        <div className="note">Signed in as <strong>{policeProfile?.username || "traffic_police"}</strong></div>
+                        <button className="btnGhost" onClick={() => { setPoliceToken(""); setPoliceProfile(null); setPoliceFeed([]); setPoliceOverview({ active_ambulances: 0, active_tls_preempted: 0, calls: [], call_markers: [], active_dispatch: [], notifications: [], planned_corridor_tls: [], planned_corridor_mode: "strict", corridor_source: "none", trigger: { confidence: 0 } }); localStorage.removeItem("policeAuthToken"); }}>Sign Out</button>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="card">
+                    <h3>Police Live Overview</h3>
+                    {!policeToken && <div className="hint">Login required to load live police operational overview.</div>}
+                    {policeToken && (
+                      <>
+                        <div className="feedLine"><span>Active ambulances</span><strong>{policeOverview.active_ambulances || 0}</strong></div>
+                        <div className="feedLine"><span>Preempted signals</span><strong>{policeOverview.active_tls_preempted || 0}</strong></div>
+                        <div className="feedLine"><span>Planned corridor TLS</span><strong>{(policeOverview.planned_corridor_tls || []).length}</strong></div>
+                        <div className="feedLine"><span>Corridor source</span><strong>{policeOverview.corridor_source || "none"}</strong></div>
+                        <div className="feedLine"><span>Planning mode</span><strong>{policeOverview.planned_corridor_mode || "strict"}</strong></div>
+                        <div className="feedLine"><span>Open call markers</span><strong>{(policeOverview.call_markers || []).length}</strong></div>
+                        <div className="feedLine"><span>Trigger confidence</span><strong>{Number(policeOverview.trigger?.confidence || 0).toFixed(3)}</strong></div>
+                        <div className="feedLine"><span>Siren/wireless confirmed</span><strong>{policeOverview.trigger?.confirmed ? "yes" : "no"}</strong></div>
+                        <div className="feedLine"><span>Detection sources</span><strong>{(policeOverview.trigger?.sources || []).join(", ") || "none"}</strong></div>
+                        <button className="btnGhost" onClick={resetCalledAmbulances} disabled={resettingAmbulances}>
+                          {resettingAmbulances ? "Resetting ambulances..." : "Reset Called Ambulances"}
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="card">
+                    <h3>Planned Corridor Signals</h3>
+                    {!policeToken && <div className="hint">Sign in to view planned corridor signals before active preemption.</div>}
+                    {policeToken && (
+                      <div className="list">
+                        {(policeOverview.planned_corridor_tls || []).map((tlsId, idx) => (
+                          <div className="row" key={`${tlsId}_${idx}`}>
+                            <div className="rowTitle">{tlsId}</div>
+                            <div className="rowMeta">planned corridor candidate</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="card">
+                    <h3>Police Notifications</h3>
+                    {!policeToken && <div className="hint">Sign in to monitor green-corridor and reroute notifications.</div>}
+                    {policeToken && (
+                      <div className="list">
+                        {(policeFeed || []).slice().reverse().map((n, idx) => (
+                          <div className="row" key={`${n.timestamp || 0}_${n.vehicle_id || "veh"}_${idx}`}>
+                            <div className="rowTitle">{n.vehicle_id || "ambulance"}</div>
+                            <div>Status: {n.status || "sent"}</div>
+                            <div>Corridor signals: {(n.corridor_tls || []).length}</div>
+                            <div>Reason: {n.reroute_reason || "best_eta_capacity"}</div>
+                            <div>ETA: {n.eta_seconds ?? "n/a"}s</div>
+                            <div>Emergency: {n.emergency_type || "n/a"}</div>
+                            <div className="rowMeta">Sim time: {n.timestamp ?? "n/a"}s</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="card">
+                    <h3>Police Call Queue</h3>
+                    {!policeToken && <div className="hint">Sign in to view all call details.</div>}
+                    {policeToken && (
+                      <div className="list">
+                        {(policeOverview.call_markers || []).slice().reverse().map((c, idx) => (
+                          <div className="row" key={`${c.call_id || "call"}_${idx}`}>
+                            <div className="rowTitle">{c.call_id || "call"}</div>
+                            <div>Caller: {c.caller_name || "citizen"}</div>
+                            <div>Type: {c.emergency_type || "general"}</div>
+                            <div>Status: {c.status || "pending_dispatch"}</div>
+                            <div>Assigned: {c.assigned_vehicle || "pending"}</div>
+                            <div>Dispatch hospital: {c.assigned_hospital_name || c.assigned_hospital_id || "pending"}</div>
+                            <div>Driver: {c.driver_name || "n/a"} {c.driver_phone ? `(${c.driver_phone})` : ""}</div>
+                            <div>Location: {(c.lat ?? "n/a")}, {(c.lon ?? "n/a")}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="card">
+                    <h3>Active Dispatch Units</h3>
+                    {!policeToken && <div className="hint">Sign in to see active emergency vehicles and routes.</div>}
+                    {policeToken && (
+                      <div className="list">
+                        {(policeOverview.active_dispatch || []).map((a, idx) => (
+                          <div className="row" key={`${a.id || "ambulance"}_${idx}`}>
+                            <div className="rowTitle">{a.id || "ambulance"}</div>
+                            <div>Status: {a.status || "enroute"}</div>
+                            <div>Mission: {a.mission_phase || "idle"}</div>
+                            <div>Hospital: {a.hospital_name || "n/a"}</div>
+                            <div>Home hospital: {a.home_hospital_name || a.home_hospital_id || "n/a"}</div>
+                            <div>Driver: {a.driver_name || "n/a"} {a.driver_phone ? `(${a.driver_phone})` : ""}</div>
+                            <div>ETA: {a.eta_seconds ?? "n/a"}s</div>
+                            <div>Speed: {a.speed_kmh ?? "n/a"} km/h</div>
+                            <div>Reroute: {a.reroute_reason || "n/a"}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </aside>
+
+            <main id="map" ref={mapElRef}></main>
+          </div>
+
+          <div className="legend">
+            <div><strong>Legend</strong></div>
+            <div className="chip"><span className="dot" style={{ background: '#0ea5e9' }}></span>Ambulance enroute</div>
+            <div className="chip"><span className="dot" style={{ background: '#22c55e' }}></span>Ambulance reached</div>
+            <div className="chip"><span className="dot" style={{ background: '#f43f5e' }}></span>Ambulance breakdown</div>
+            <div className="chip"><span className="dot" style={{ background: '#ef4444' }}></span>Caller location</div>
+            <div className="chip"><span style={{ display: 'inline-block', width: 14, height: 3, background: '#16a34a', borderRadius: 2 }}></span>Hospital route</div>
+            <div className="chip"><span style={{ display: 'inline-block', width: 14, height: 3, background: '#2563eb', borderRadius: 2 }}></span>Travelled path to caller</div>
+            <div className="chip"><span style={{ display: 'inline-block', width: 14, height: 3, background: '#16a34a', borderRadius: 2 }}></span>Travelled path to hospital</div>
+            <div className="chip"><span style={{ color: '#dc2626', fontWeight: 700 }}>✚</span>Hospital</div>
+          </div>
+        </>
+      );
     }
 
-    startSignalPulseLoop();
-    setInterval(tick, 1000);
-    tick();
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
   </script>
 </body>
 </html>

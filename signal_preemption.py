@@ -7,6 +7,10 @@ class GreenCorridorController:
         restore_after_s: float = 20.0,
         max_owner_hold_s: float = 35.0,
         min_switch_interval_s: float = 5.0,
+        all_red_s: float = 0.0,
+        min_dynamic_green_s: float = 8.0,
+        max_dynamic_green_s: float = 55.0,
+        queue_gain_s: float = 2.0,
     ) -> None:
         self.preemption_phases = preemption_phases
         self.lookahead_m = float(lookahead_m)
@@ -14,12 +18,20 @@ class GreenCorridorController:
         self.restore_after_s = float(restore_after_s)
         self.max_owner_hold_s = float(max_owner_hold_s)
         self.min_switch_interval_s = float(min_switch_interval_s)
+        self.all_red_s = max(0.0, float(all_red_s))
+        self.min_dynamic_green_s = max(3.0, float(min_dynamic_green_s))
+        self.max_dynamic_green_s = max(self.min_dynamic_green_s, float(max_dynamic_green_s))
+        self.queue_gain_s = max(0.0, float(queue_gain_s))
 
         self._baseline: dict[str, tuple[str, int, float]] = {}
         self._active_ts: dict[str, float] = {}
         self._tls_owner: dict[str, str] = {}
         self._tls_owner_since: dict[str, float] = {}
         self._last_switch_ts: dict[str, float] = {}
+        self._pending_green_until: dict[str, float] = {}
+        self._pending_link_idx: dict[str, int] = {}
+        self._last_refresh_ts: dict[str, float] = {}
+        self._refresh_interval_s: float = 4.0
 
     @staticmethod
     def _is_green(state_char: str) -> bool:
@@ -48,8 +60,115 @@ class GreenCorridorController:
             traci.trafficlight.getPhaseDuration(tls_id),
         )
 
+    def _set_all_red(self, traci, tls_id: str, sim_time: float, owner: str, link_index: int) -> None:
+        try:
+            logic = traci.trafficlight.getAllProgramLogics(tls_id)[0]
+        except Exception:
+            return
+
+        try:
+            lane_count = len(logic.phases[0].state)
+        except Exception:
+            lane_count = 0
+        if lane_count <= 0:
+            return
+
+        all_red_state = "r" * lane_count
+        try:
+            traci.trafficlight.setRedYellowGreenState(tls_id, all_red_state)
+            traci.trafficlight.setPhaseDuration(tls_id, self.all_red_s)
+            self._pending_green_until[tls_id] = float(sim_time) + self.all_red_s
+            self._pending_link_idx[tls_id] = int(link_index)
+            print(
+                f"[SIGNAL] t={sim_time:.1f}s tls={tls_id} owner={owner} "
+                f"all-red-start duration={self.all_red_s:.1f}s"
+            )
+        except Exception:
+            return
+
+    def _demand_adaptive_green_hold(self, traci, tls_id: str) -> float:
+        demand_score = 0.0
+        try:
+            controlled_lanes = traci.trafficlight.getControlledLanes(tls_id)
+        except Exception:
+            controlled_lanes = []
+
+        seen = set()
+        for lane_id in controlled_lanes:
+            if lane_id in seen:
+                continue
+            seen.add(lane_id)
+            try:
+                halted = float(traci.lane.getLastStepHaltingNumber(lane_id))
+            except Exception:
+                halted = 0.0
+            demand_score += halted
+
+        hold = self.min_dynamic_green_s + demand_score * self.queue_gain_s
+        hold = max(0.0, hold)
+        return min(self.max_dynamic_green_s, max(self.min_dynamic_green_s, hold))
+
+    def _release_pending_all_red(self, traci, sim_time: float) -> None:
+        if not self._pending_green_until:
+            return
+
+        ready_ids = [
+            tls_id
+            for tls_id, due_ts in self._pending_green_until.items()
+            if sim_time >= due_ts
+        ]
+        for tls_id in ready_ids:
+            link_idx = int(self._pending_link_idx.get(tls_id, 0))
+            desired_phase = self.preemption_phases.get(tls_id)
+            if desired_phase is None:
+                desired_phase = self._find_phase_for_link(traci, tls_id, link_idx)
+            if desired_phase is None:
+                self._pending_green_until.pop(tls_id, None)
+                self._pending_link_idx.pop(tls_id, None)
+                continue
+
+            try:
+                traci.trafficlight.setPhase(tls_id, int(desired_phase))
+                dynamic_hold = self._demand_adaptive_green_hold(traci, tls_id)
+                traci.trafficlight.setPhaseDuration(tls_id, dynamic_hold)
+                self._active_ts[tls_id] = float(sim_time)
+                self._last_switch_ts[tls_id] = float(sim_time)
+                self._last_refresh_ts[tls_id] = float(sim_time)
+                owner = self._tls_owner.get(tls_id, "unknown")
+                print(
+                    f"[SIGNAL] t={sim_time:.1f}s tls={tls_id} owner={owner} "
+                    f"phase-> {desired_phase} dynamic-green={dynamic_hold:.1f}s"
+                )
+            except Exception:
+                pass
+
+            self._pending_green_until.pop(tls_id, None)
+            self._pending_link_idx.pop(tls_id, None)
+
     def _activate(self, traci, tls_id: str, link_index: int, sim_time: float) -> None:
         self._store_baseline(traci, tls_id)
+
+        # Keep an already preempted TLS stable; refresh hold timer occasionally only.
+        if tls_id in self._active_ts and tls_id not in self._pending_green_until:
+            last_refresh = float(self._last_refresh_ts.get(tls_id, -1e9))
+            if (float(sim_time) - last_refresh) >= self._refresh_interval_s:
+                dynamic_hold = self._demand_adaptive_green_hold(traci, tls_id)
+                try:
+                    traci.trafficlight.setPhaseDuration(tls_id, dynamic_hold)
+                except Exception:
+                    pass
+                self._last_refresh_ts[tls_id] = float(sim_time)
+            self._active_ts[tls_id] = float(sim_time)
+            return
+
+        if self.all_red_s > 0.0 and tls_id not in self._pending_green_until:
+            owner = self._tls_owner.get(tls_id, "unknown")
+            self._set_all_red(traci, tls_id, sim_time, owner, link_index)
+            return
+
+        if tls_id in self._pending_green_until:
+            return
+
         desired_phase = self.preemption_phases.get(tls_id)
         if desired_phase is None:
             desired_phase = self._find_phase_for_link(traci, tls_id, link_index)
@@ -65,8 +184,10 @@ class GreenCorridorController:
                 f"[SIGNAL] t={sim_time:.1f}s tls={tls_id} owner={owner} "
                 f"phase {current_phase}->{desired_phase} (link={link_index})"
             )
-        traci.trafficlight.setPhaseDuration(tls_id, self.hold_green_s)
+        dynamic_hold = self._demand_adaptive_green_hold(traci, tls_id)
+        traci.trafficlight.setPhaseDuration(tls_id, dynamic_hold)
         self._active_ts[tls_id] = sim_time
+        self._last_refresh_ts[tls_id] = float(sim_time)
 
     def preempt_for_vehicle(self, traci, vehicle_id: str) -> None:
         self.preempt_for_vehicles(traci, [vehicle_id], {vehicle_id: 1.0})
@@ -89,6 +210,7 @@ class GreenCorridorController:
 
     def preempt_for_vehicles(self, traci, vehicle_ids: list[str], priority_by_vehicle: dict[str, float]) -> None:
         sim_time = traci.simulation.getTime()
+        self._release_pending_all_red(traci, float(sim_time))
         requests: dict[str, tuple[str, int, float]] = {}
 
         for vehicle_id in vehicle_ids:
@@ -140,6 +262,9 @@ class GreenCorridorController:
             self._baseline.pop(tls_id, None)
             self._tls_owner.pop(tls_id, None)
             self._tls_owner_since.pop(tls_id, None)
+            self._pending_green_until.pop(tls_id, None)
+            self._pending_link_idx.pop(tls_id, None)
+            self._last_refresh_ts.pop(tls_id, None)
 
     def active_tls_count(self) -> int:
         return len(self._active_ts)

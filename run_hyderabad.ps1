@@ -14,7 +14,8 @@ param(
     [double]$BikeTrafficScale = 0.7,
     [int]$StepLimit = 0,
     [string]$LoraUdpHost = '127.0.0.1',
-    [int]$LoraUdpPort = 0
+    [int]$LoraUdpPort = 0,
+    [string]$PoliceMobile = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -77,8 +78,10 @@ Write-Host "[RUN] Generating bike traffic demand (period=$effectiveBikePeriod, s
 Write-Host "[RUN] Generating pedestrian demand (period=$pedPeriod)"
 & $py "$env:SUMO_HOME/tools/randomTrips.py" -n hyderabad.net.xml -o hyderabad_ped.trips.xml -r hyderabad_ped.rou.xml -e $duration -p $pedPeriod --seed 44 --pedestrians --prefix ped --validate
 
-Write-Host "[RUN] Creating $ambulanceCount ambulance routes"
-& $py create_multi_ambulance_routes.py --base-route hyderabad_car.rou.xml --out emergency_vehicle.rou.xml --net hyderabad.net.xml --require-tls-route --count $ambulanceCount --depart-start $departStart --depart-gap $departGap
+Write-Host "[RUN] Creating stationed ambulance routes (3 per hospital)"
+& $py create_stationed_ambulance_routes.py --config config/hyderabad_example.json --net hyderabad.net.xml --out emergency_vehicle.rou.xml --per-hospital 3
+$ambulanceCount = (Select-String -Path emergency_vehicle.rou.xml -Pattern '<vehicle ').Count
+Write-Host "[RUN] Stationed ambulances generated: $ambulanceCount"
 
 Write-Host "[RUN] Building SUMO configuration"
 & $py create_hyderabad_sumocfg.py --net-file hyderabad.net.xml --route-files hyderabad_car.rou.xml,hyderabad_bike.rou.xml,hyderabad_ped.rou.xml,emergency_vehicle.rou.xml --additional-files hospital_markers.add.xml --out hyderabad.sumocfg
@@ -103,12 +106,15 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 New-Item -ItemType Directory -Force out | Out-Null
-Set-Content -Path out/mic_score.txt -Value '0.95'
-Set-Content -Path out/wireless_signal.txt -Value 'detected'
+Set-Content -Path out/mic_score.txt -Value '0.05'
+Set-Content -Path out/wireless_signal.txt -Value 'off'
+Set-Content -Path out/call_requests.jsonl -Value ''
+Set-Content -Path out/trip_commands.jsonl -Value ''
+Set-Content -Path out/control_commands.jsonl -Value ''
 
 if ($StartWebDashboard) {
     Write-Host "[RUN] Starting realtime web dashboard on http://127.0.0.1:$WebDashboardPort"
-    Start-Process -FilePath $py -ArgumentList @('web/realtime_server.py', '--host', '127.0.0.1', '--port', "$WebDashboardPort") -WorkingDirectory $PWD | Out-Null
+    Start-Process -FilePath $py -ArgumentList @('web/realtime_server.py', '--host', '127.0.0.1', '--port', "$WebDashboardPort", '--call-file', 'out/call_requests.jsonl', '--trip-command-file', 'out/trip_commands.jsonl', '--control-command-file', 'out/control_commands.jsonl') -WorkingDirectory $PWD | Out-Null
 }
 
 Write-Host "[RUN] Launching emergency controller"
@@ -120,6 +126,9 @@ $controllerArgs = @(
     '--emergency-type', 'trauma',
     '--mic-score-file', 'out/mic_score.txt',
     '--wireless-file', 'out/wireless_signal.txt',
+    '--call-requests-file', 'out/call_requests.jsonl',
+    '--trip-commands-file', 'out/trip_commands.jsonl',
+    '--control-commands-file', 'out/control_commands.jsonl',
     '--hospitals-csv', 'hyderabad_hospitals.csv',
     '--config', 'config/hyderabad_example.json',
     '--profile', $modeConfigPath,
@@ -129,7 +138,6 @@ $controllerArgs = @(
     '--routing-algorithm', 'dijkstra',
     '--routing-net-file', 'hyderabad.net.xml',
     '--reroute-interval-s', '1.8',
-    '--force-green-corridor',
     '--assert-interval-s', '10.0',
     '--hospital-stop-duration-s', '45.0',
     '--expected-ambulance-count', $ambulanceCount,
@@ -138,9 +146,13 @@ $controllerArgs = @(
     '--web-state-interval-s', '1.0'
 )
 
+if (-not [string]::IsNullOrWhiteSpace($PoliceMobile)) {
+    $controllerArgs += @('--police-sms-to', $PoliceMobile)
+}
+
 if ($SumoBinary -eq 'sumo-gui') {
     $controllerArgs += @(
-        '--ambulance-debug-gui', '--camera-follow-mode', 'fixed', '--camera-switch-interval-s', '5.0', '--camera-zoom', '1700',
+        '--ambulance-debug-gui', '--camera-follow-mode', 'fleet', '--camera-switch-interval-s', '4.0', '--camera-zoom', '1700',
         '--status-panel-log', '--status-panel-interval-s', '1.0'
     )
     if ($HideNonEmergencyLabels) {

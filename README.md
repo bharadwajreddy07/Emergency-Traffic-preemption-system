@@ -217,6 +217,13 @@ python smart_emergency_system.py `
   --write-web-state
 ```
 
+### Live feed inputs
+
+Provide live-feed files directly:
+
+1. `out/live_traffic.json`
+2. `out/lora_events.jsonl`
+
 Optional API endpoint for traffic police command center:
 
 ```powershell
@@ -257,46 +264,72 @@ Web dashboard now shows:
 3. Reroute reason (per ambulance)
 4. Police notification status
 
-### Mock realtime generator (no hardware required)
+### Signal behavior update
 
-You can generate both `out/live_traffic.json` and `out/lora_events.jsonl` with a single helper script:
+1. Runner no longer forces always-on green corridor.
+2. Emergency preemption can use a configurable all-red safety window (`all_red_s`, default 120s).
+3. Green hold duration is demand-adaptive using controlled-lane queues (`min_dynamic_green_s`..`max_dynamic_green_s`).
+4. After preemption release, TLS returns to baseline SUMO program (including normal yellow/green progression).
 
-```powershell
-python generate_mock_realtime_inputs.py --net-file hyderabad.net.xml --truncate-lora --interval-s 1.0
+## 5.4) User Web Call -> Ambulance Dispatch -> Hospital Reroute
+
+1. User clicks location on dashboard map and raises emergency call (`/api/call`).
+2. Call is appended to `out/call_requests.jsonl`.
+3. Controller map-matches call location and assigns nearest idle ambulance.
+4. Ambulance first routes to caller edge (`dispatch_to_caller`).
+5. After pickup, reroutes to best hospital using live merged traffic costs.
+6. Green-corridor and police notifications continue for that mission.
+
+Call API now supports preferred hospital hint:
+
+```json
+{
+  "caller_name": "citizen",
+  "emergency_type": "trauma",
+  "lat": 17.4412,
+  "lon": 78.3921,
+  "preferred_hospital_id": "image_hospitals"
+}
 ```
 
-Run for a fixed number of ticks (for test automation):
+If preferred hospital ETA is within configured tolerance (`--preferred-hospital-max-extra-eta-s`), it is selected.
+
+## 5.6) Police Mobile SMS Notifications
+
+You can send police alerts directly to a mobile number (not only dashboard logs).
+
+Required environment variables:
 
 ```powershell
-python generate_mock_realtime_inputs.py --iterations 30 --truncate-lora
+$env:TWILIO_ACCOUNT_SID = "<sid>"
+$env:TWILIO_AUTH_TOKEN = "<token>"
+$env:TWILIO_FROM_NUMBER = "+1XXXXXXXXXX"
 ```
 
-Recommended full demo (three terminals):
-
-1. Generate mock data continuously:
+Run with police mobile target:
 
 ```powershell
-python generate_mock_realtime_inputs.py --truncate-lora
+.\run_hyderabad.ps1 -StartWebDashboard -PoliceMobile "+91XXXXXXXXXX"
 ```
 
-2. Run emergency controller using merged realtime inputs:
+## 5.7) React Web UI
+
+`web/index.html` is now a React-based single-page UI (CDN React + component state + Leaflet map) with:
+
+1. realtime feed health
+2. map-based call dispatch
+3. preferred hospital selection
+4. fleet/call timeline panels
+
+## 5.5) Ambulances Initially Stationed At Hospitals
+
+Runner now generates emergency fleet from hospitals (3 ambulances per hospital edge):
 
 ```powershell
-python smart_emergency_system.py `
-  --sumocfg hyderabad.sumocfg `
-  --sumo-binary sumo-gui `
-  --routing-algorithm dijkstra `
-  --live-traffic-file out/live_traffic.json `
-  --lora-events-file out/lora_events.jsonl `
-  --police-log out/police_notifications.jsonl `
-  --write-web-state
+python create_stationed_ambulance_routes.py --config config/hyderabad_example.json --net hyderabad.net.xml --out emergency_vehicle.rou.xml --per-hospital 3
 ```
 
-3. Start dashboard server:
-
-```powershell
-python web/realtime_server.py --host 127.0.0.1 --port 8090
-```
+`run_hyderabad.ps1` uses this generation path by default.
 
 ## 5.1) Parallel Realtime Web Dashboard
 
