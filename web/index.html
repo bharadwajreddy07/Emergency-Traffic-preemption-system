@@ -70,6 +70,9 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script type="text/babel" data-presets="env,react">
     const { useEffect, useMemo, useRef, useState } = React;
+    const PAGE_MODE = (window.__PAGE_MODE__ || "combined").toLowerCase();
+    const IS_USER_PAGE = PAGE_MODE === "user";
+    const IS_POLICE_PAGE = PAGE_MODE === "police";
 
     function ageBadgeClass(age) {
       if (age == null) return "warn";
@@ -115,13 +118,16 @@
       const [userNewPassword, setUserNewPassword] = useState("");
       const [userToken, setUserToken] = useState("");
       const [userProfile, setUserProfile] = useState(null);
-      const [activeTab, setActiveTab] = useState("ops");
+      const [activeTab, setActiveTab] = useState(IS_POLICE_PAGE ? "police" : "ops");
       const [policeUser, setPoliceUser] = useState("traffic_police");
       const [policePassword, setPolicePassword] = useState("police123");
       const [policeToken, setPoliceToken] = useState("");
       const [policeProfile, setPoliceProfile] = useState(null);
       const [resettingAmbulances, setResettingAmbulances] = useState(false);
       const [policeFeed, setPoliceFeed] = useState([]);
+      const [policeAlerts, setPoliceAlerts] = useState([]);
+      const [policeAlertCursor, setPoliceAlertCursor] = useState(0);
+      const [selectedUserVehicleId, setSelectedUserVehicleId] = useState("");
       const [policeOverview, setPoliceOverview] = useState({
         active_ambulances: 0,
         active_tls_preempted: 0,
@@ -134,6 +140,60 @@
         corridor_source: "none",
         trigger: { confidence: 0 },
       });
+
+      const isPoliceMapView = (IS_POLICE_PAGE || activeTab === "police") && !!policeToken;
+
+      function computePoliceAlerts(overview) {
+        const alerts = [];
+        const feed = Array.isArray(overview?.notifications) ? overview.notifications : [];
+        const calls = Array.isArray(overview?.call_markers) ? overview.call_markers : [];
+        const dispatch = Array.isArray(overview?.active_dispatch) ? overview.active_dispatch : [];
+
+        for (const n of feed.slice(-40)) {
+          const status = String(n.status || "sent").toLowerCase();
+          const eta = Number(n.eta_seconds);
+          const vehicleStatus = String(n.vehicle_status || "unknown");
+          let severity = "info";
+          if (status.includes("failed") || status.includes("error")) severity = "critical";
+          else if (Number.isFinite(eta) && eta > 900) severity = "warning";
+          alerts.push({
+            id: `feed_${n.timestamp || 0}_${n.vehicle_id || "veh"}_${status}`,
+            ts: Number(n.timestamp || 0),
+            severity,
+            title: `${n.vehicle_id || "Ambulance"} corridor update`,
+            message: `notify=${status}, vehicle=${vehicleStatus}, eta=${Number.isFinite(eta) ? `${eta}s` : "n/a"}, reason=${n.reroute_reason || "best_eta_capacity"}`,
+          });
+        }
+
+        for (const c of calls.slice(-60)) {
+          const status = String(c.status || "pending_dispatch").toLowerCase();
+          if (!["pending_dispatch", "assigned", "picked_up", "picked_up_auto"].includes(status)) continue;
+          const severity = status === "pending_dispatch" ? "warning" : "info";
+          alerts.push({
+            id: `call_${c.call_id || "call"}_${status}_${c.timestamp || 0}`,
+            ts: Number(c.timestamp || 0),
+            severity,
+            title: `Call ${c.call_id || "unknown"}`,
+            message: `status=${status}, assigned=${c.assigned_vehicle || "pending"}, type=${c.emergency_type || "general"}`,
+          });
+        }
+
+        for (const a of dispatch) {
+          const status = String(a.status || "").toLowerCase();
+          if (status === "breakdown") {
+            alerts.push({
+              id: `dispatch_breakdown_${a.id || "ambulance"}_${a.call_id || "none"}`,
+              ts: Number(overview?.timestamp || Date.now() / 1000),
+              severity: "critical",
+              title: `${a.id || "Ambulance"} breakdown`,
+              message: `mission=${a.mission_phase || "idle"}, location=${a.lat ?? "n/a"},${a.lon ?? "n/a"}`,
+            });
+          }
+        }
+
+        alerts.sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
+        return alerts.slice(0, 120);
+      }
 
       const mapRef = useRef(null);
       const mapElRef = useRef(null);
@@ -338,6 +398,77 @@
       }, [policeToken]);
 
       useEffect(() => {
+        if (!policeToken) {
+          setPoliceAlerts([]);
+          setPoliceAlertCursor(0);
+          return;
+        }
+        const alerts = computePoliceAlerts(policeOverview);
+        setPoliceAlerts(alerts);
+      }, [policeOverview, policeToken]);
+
+      useEffect(() => {
+        if (!policeToken || !isPoliceMapView || policeAlerts.length === 0) return;
+        const unseen = policeAlerts.slice(0, Math.max(0, policeAlerts.length - policeAlertCursor));
+        if (policeAlertCursor === 0) {
+          setPoliceAlertCursor(policeAlerts.length);
+          return;
+        }
+        for (const alert of unseen.slice(0, 3)) {
+          pushToast(`[Police Alert] ${alert.title}: ${alert.message}`);
+        }
+        setPoliceAlertCursor(policeAlerts.length);
+      }, [policeAlerts, policeToken, isPoliceMapView]);
+
+      useEffect(() => {
+        if (!userToken) {
+          setSelectedUserVehicleId("");
+          return;
+        }
+        const fleet = Array.isArray(data.ambulances) ? data.ambulances : [];
+        if (fleet.length === 0) {
+          setSelectedUserVehicleId("");
+          return;
+        }
+        if (!selectedUserVehicleId || !fleet.some(v => v.id === selectedUserVehicleId)) {
+          setSelectedUserVehicleId(fleet[0].id);
+        }
+      }, [data.ambulances, userToken, selectedUserVehicleId]);
+
+      const visibleAmbulances = useMemo(() => {
+        const fleet = Array.isArray(data.ambulances) ? data.ambulances : [];
+        if (isPoliceMapView) return fleet;
+        if (!userToken) return [];
+        return fleet.filter(v => String(v.id || "") === String(selectedUserVehicleId || ""));
+      }, [data.ambulances, isPoliceMapView, userToken, selectedUserVehicleId]);
+
+      const visibleCallMarkers = useMemo(() => {
+        const markers = Array.isArray(data.call_markers) ? data.call_markers : [];
+        if (isPoliceMapView) return markers;
+        if (!userToken) return [];
+        const currentUser = String(userProfile?.username || userName || "").trim();
+        if (!currentUser) return markers;
+        return markers.filter(m => {
+          const createdBy = String(m.created_by || m.caller_name || "").trim();
+          return createdBy === currentUser;
+        });
+      }, [data.call_markers, isPoliceMapView, userToken, userProfile, userName]);
+
+      const latestUserTrackedVehicleId = useMemo(() => {
+        if (!userToken || isPoliceMapView) return "";
+        const candidate = (visibleCallMarkers || [])
+          .slice()
+          .reverse()
+          .find(c => ["assigned", "picked_up", "picked_up_auto"].includes(String(c.status || "").toLowerCase()) && c.assigned_vehicle);
+        return String(candidate?.assigned_vehicle || "");
+      }, [visibleCallMarkers, userToken, isPoliceMapView]);
+
+      useEffect(() => {
+        if (!latestUserTrackedVehicleId || isPoliceMapView) return;
+        setSelectedUserVehicleId(prev => prev || latestUserTrackedVehicleId);
+      }, [latestUserTrackedVehicleId, isPoliceMapView]);
+
+      useEffect(() => {
         if (mapRef.current) return;
         const map = L.map(mapElRef.current, { zoomControl: true }).setView([17.4435, 78.385], 14);
         const road = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 20, attribution: "OSM" });
@@ -362,7 +493,7 @@
           return `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #fff"></div>`;
         };
 
-        for (const amb of data.ambulances || []) {
+        for (const amb of visibleAmbulances || []) {
           if (amb.lat == null || amb.lon == null) continue;
           ambSeen.add(amb.id);
           let m = ambulanceMarkers.current.get(amb.id);
@@ -455,7 +586,8 @@
 
         const sigSeen = new Set();
         const plannedCorridorSet = new Set(data.planned_corridor_tls || []);
-        for (const sig of data.signals || []) {
+        const signalRows = isPoliceMapView ? (data.signals || []) : [];
+        for (const sig of signalRows) {
           if (sig.lat == null || sig.lon == null) continue;
           sigSeen.add(sig.id);
           const isPlanned = plannedCorridorSet.has(sig.id);
@@ -504,7 +636,7 @@
         }
 
         const routeSeen = new Set();
-        for (const amb of data.ambulances || []) {
+        for (const amb of visibleAmbulances || []) {
           const pts = Array.isArray(amb.route_preview) ? amb.route_preview : [];
           if (pts.length < 2) continue;
           routeSeen.add(amb.id);
@@ -537,8 +669,8 @@
 
         const corridorPts = Array.isArray(data.corridor_route) ? data.corridor_route : [];
         let bestPts = corridorPts;
-        if (bestPts.length < 2 && (data.ambulances || []).length > 0) {
-          const active = (data.ambulances || []).find(a => Array.isArray(a.route_preview) && a.route_preview.length >= 2);
+        if (bestPts.length < 2 && (visibleAmbulances || []).length > 0) {
+          const active = (visibleAmbulances || []).find(a => Array.isArray(a.route_preview) && a.route_preview.length >= 2);
           if (active) bestPts = active.route_preview;
         }
         if (bestPts.length >= 2) {
@@ -562,7 +694,7 @@
 
         const callSeen = new Set();
         const callerHtml = "<div style='width:18px;height:18px;border-radius:50%;background:#ef4444;border:2px solid #fff;box-shadow:0 0 0 6px rgba(239,68,68,0.22)'></div>";
-        for (const call of data.call_markers || []) {
+        for (const call of visibleCallMarkers || []) {
           if (call.lat == null || call.lon == null) continue;
           const callId = String(call.call_id || "");
           if (!callId) continue;
@@ -584,7 +716,7 @@
             callMarkers.current.delete(id);
           }
         }
-      }, [data]);
+      }, [data, visibleAmbulances, visibleCallMarkers, isPoliceMapView]);
 
       useEffect(() => {
         let stop = false;
@@ -717,6 +849,30 @@
         return merged;
       }, [data.call_markers, data.calls]);
 
+      const latestRealtimeUserUpdate = useMemo(() => {
+        const call = actionableCalls.length ? actionableCalls[0] : null;
+        if (!call) return null;
+        return {
+          callId: call.call_id || "",
+          status: call.status || "assigned",
+          vehicle: call.assigned_vehicle || "pending",
+          hospital: call.assigned_hospital_name || call.assigned_hospital_id || "pending",
+        };
+      }, [actionableCalls]);
+
+      const latestRealtimePoliceUpdate = useMemo(() => {
+        if (!policeFeed || policeFeed.length === 0) return null;
+        const n = policeFeed[policeFeed.length - 1] || {};
+        return {
+          vehicle: n.vehicle_id || "ambulance",
+          notifyStatus: n.status || "sent",
+          vehicleStatus: n.vehicle_status || "unknown",
+          phase: n.mission_phase || "idle",
+          location: `${n.vehicle_lat ?? "n/a"}, ${n.vehicle_lon ?? "n/a"}`,
+          ts: n.timestamp ?? "n/a",
+        };
+      }, [policeFeed]);
+
       return (
         <>
           <div className="toastWrap">
@@ -734,12 +890,14 @@
                 <div className="kpi"><div className="kpiLabel">Trigger Confidence</div><div className="kpiVal">{Number(data.trigger?.confidence || 0).toFixed(3)}</div></div>
               </div>
 
-              <div className="tabs">
-                <button className={`tab ${activeTab === "ops" ? "active" : ""}`} onClick={() => setActiveTab("ops")}>Operations</button>
-                <button className={`tab ${activeTab === "police" ? "active" : ""}`} onClick={() => setActiveTab("police")}>Traffic Police</button>
-              </div>
+              {!IS_USER_PAGE && !IS_POLICE_PAGE && (
+                <div className="tabs">
+                  <button className={`tab ${activeTab === "ops" ? "active" : ""}`} onClick={() => setActiveTab("ops")}>Operations</button>
+                  <button className={`tab ${activeTab === "police" ? "active" : ""}`} onClick={() => setActiveTab("police")}>Traffic Police</button>
+                </div>
+              )}
 
-              {activeTab === "ops" && (
+              {(IS_USER_PAGE || activeTab === "ops") && (
                 <>
                   <div className="card">
                     <h3>Realtime Feed Health</h3>
@@ -801,36 +959,33 @@
                   </div>
 
                   <div className="card">
-                    <h3>Fleet</h3>
-                    <div className="list">
-                      {(data.ambulances || []).map(a => (
-                        <div className="row" key={a.id}>
-                          <div className="id">{a.id}</div>
-                          <div>Hospital: {a.destination_hospital_name || a.hospital_name || a.return_hospital_name || a.home_hospital_name || "n/a"}</div>
-                          <div>ETA: {a.eta_seconds ?? "n/a"}s</div>
-                          <div>Mission: {a.mission_phase || "idle"}</div>
-                          <div>Driver: {a.driver_name || "n/a"} {a.driver_phone ? `(${a.driver_phone})` : ""}</div>
-                          <div>Reason: {a.reroute_reason || "n/a"}</div>
-                          <div>Police: {a.police_notification_status || "pending"}</div>
-                          <div className={`id`}>Status: <span>{a.status}</span></div>
-                        </div>
-                      ))}
-                    </div>
+                    <h3>User Map View</h3>
+                    {!userToken && <div className="hint">Sign in to enable user map view and vehicle tracking.</div>}
+                    {userToken && (
+                      <>
+                        <div className="hint">User map shows only the selected vehicle path and your own call markers.</div>
+                        <select className="field" value={selectedUserVehicleId} onChange={e => setSelectedUserVehicleId(e.target.value)}>
+                          {(data.ambulances || []).map(a => (
+                            <option key={a.id} value={a.id}>{a.id}</option>
+                          ))}
+                        </select>
+                      </>
+                    )}
                   </div>
 
                   <div className="card">
-                    <h3>Calls Timeline</h3>
-                    <div className="list">
-                      {(data.calls || []).slice().reverse().map(c => (
-                        <div className="row" key={`${c.call_id}_${c.timestamp}`}>
-                          <div className="id">{c.call_id}</div>
-                          <div>Status: {c.status}</div>
-                          <div>Vehicle: {c.assigned_vehicle || "pending"}</div>
-                          <div>Edge: {c.matched_edge || "n/a"}</div>
-                          <div>Location: {(c.lat ?? "n/a")}, {(c.lon ?? "n/a")}</div>
-                        </div>
-                      ))}
-                    </div>
+                    <h3>Realtime User Updates</h3>
+                    {!userToken && <div className="hint">Sign in to see live assignment and trip updates.</div>}
+                    {userToken && !latestRealtimeUserUpdate && <div className="hint">No active user call updates yet.</div>}
+                    {userToken && latestRealtimeUserUpdate && (
+                      <>
+                        <div className="feedLine"><span>Call ID</span><strong>{latestRealtimeUserUpdate.callId || "n/a"}</strong></div>
+                        <div className="feedLine"><span>Status</span><strong>{latestRealtimeUserUpdate.status}</strong></div>
+                        <div className="feedLine"><span>Assigned vehicle</span><strong>{latestRealtimeUserUpdate.vehicle}</strong></div>
+                        <div className="feedLine"><span>Hospital</span><strong>{latestRealtimeUserUpdate.hospital}</strong></div>
+                        <div className="hint">Map auto-tracks your selected or latest assigned ambulance.</div>
+                      </>
+                    )}
                   </div>
 
                   <div className="card">
@@ -852,7 +1007,7 @@
                 </>
               )}
 
-              {activeTab === "police" && (
+              {(IS_POLICE_PAGE || activeTab === "police") && (
                 <>
                   <div className="card">
                     <h3>Traffic Police Sign In</h3>
@@ -867,9 +1022,15 @@
                     {policeToken && (
                       <>
                         <div className="note">Signed in as <strong>{policeProfile?.username || "traffic_police"}</strong></div>
-                        <button className="btnGhost" onClick={() => { setPoliceToken(""); setPoliceProfile(null); setPoliceFeed([]); setPoliceOverview({ active_ambulances: 0, active_tls_preempted: 0, calls: [], call_markers: [], active_dispatch: [], notifications: [], planned_corridor_tls: [], planned_corridor_mode: "strict", corridor_source: "none", trigger: { confidence: 0 } }); localStorage.removeItem("policeAuthToken"); }}>Sign Out</button>
+                        <button className="btnGhost" onClick={() => { setPoliceToken(""); setPoliceProfile(null); setPoliceFeed([]); setPoliceAlerts([]); setPoliceAlertCursor(0); setPoliceOverview({ active_ambulances: 0, active_tls_preempted: 0, calls: [], call_markers: [], active_dispatch: [], notifications: [], planned_corridor_tls: [], planned_corridor_mode: "strict", corridor_source: "none", trigger: { confidence: 0 } }); localStorage.removeItem("policeAuthToken"); }}>Sign Out</button>
                       </>
                     )}
+                  </div>
+
+                  <div className="card">
+                    <h3>Police Map View</h3>
+                    {!policeToken && <div className="hint">Police map view is enabled only after traffic-police login.</div>}
+                    {policeToken && <div className="hint">Police map shows all emergency units, all active calls, and signal preemption layers.</div>}
                   </div>
 
                   <div className="card">
@@ -894,17 +1055,18 @@
                   </div>
 
                   <div className="card">
-                    <h3>Planned Corridor Signals</h3>
-                    {!policeToken && <div className="hint">Sign in to view planned corridor signals before active preemption.</div>}
-                    {policeToken && (
-                      <div className="list">
-                        {(policeOverview.planned_corridor_tls || []).map((tlsId, idx) => (
-                          <div className="row" key={`${tlsId}_${idx}`}>
-                            <div className="rowTitle">{tlsId}</div>
-                            <div className="rowMeta">planned corridor candidate</div>
-                          </div>
-                        ))}
-                      </div>
+                    <h3>Realtime Police Updates</h3>
+                    {!policeToken && <div className="hint">Sign in to see latest station alerts.</div>}
+                    {policeToken && !latestRealtimePoliceUpdate && <div className="hint">No police updates yet.</div>}
+                    {policeToken && latestRealtimePoliceUpdate && (
+                      <>
+                        <div className="feedLine"><span>Vehicle</span><strong>{latestRealtimePoliceUpdate.vehicle}</strong></div>
+                        <div className="feedLine"><span>Notify status</span><strong>{latestRealtimePoliceUpdate.notifyStatus}</strong></div>
+                        <div className="feedLine"><span>Vehicle status</span><strong>{latestRealtimePoliceUpdate.vehicleStatus}</strong></div>
+                        <div className="feedLine"><span>Mission phase</span><strong>{latestRealtimePoliceUpdate.phase}</strong></div>
+                        <div className="feedLine"><span>Location</span><strong>{latestRealtimePoliceUpdate.location}</strong></div>
+                        <div className="feedLine"><span>Sim time</span><strong>{latestRealtimePoliceUpdate.ts}s</strong></div>
+                      </>
                     )}
                   </div>
 
@@ -916,7 +1078,10 @@
                         {(policeFeed || []).slice().reverse().map((n, idx) => (
                           <div className="row" key={`${n.timestamp || 0}_${n.vehicle_id || "veh"}_${idx}`}>
                             <div className="rowTitle">{n.vehicle_id || "ambulance"}</div>
-                            <div>Status: {n.status || "sent"}</div>
+                            <div>Notify status: {n.status || "sent"}</div>
+                            <div>Vehicle status: {n.vehicle_status || "unknown"}</div>
+                            <div>Mission: {n.mission_phase || "idle"}</div>
+                            <div>Vehicle location: {(n.vehicle_lat ?? "n/a")}, {(n.vehicle_lon ?? "n/a")}</div>
                             <div>Corridor signals: {(n.corridor_tls || []).length}</div>
                             <div>Reason: {n.reroute_reason || "best_eta_capacity"}</div>
                             <div>ETA: {n.eta_seconds ?? "n/a"}s</div>
@@ -924,6 +1089,26 @@
                             <div className="rowMeta">Sim time: {n.timestamp ?? "n/a"}s</div>
                           </div>
                         ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="card">
+                    <h3>Police Priority Alerts</h3>
+                    {!policeToken && <div className="hint">Sign in to view prioritized police alerts.</div>}
+                    {policeToken && (
+                      <div className="list">
+                        {(policeAlerts || []).map((a, idx) => (
+                          <div className="row" key={`${a.id}_${idx}`}>
+                            <div className="rowTitle">{a.title}</div>
+                            <div>
+                              Severity: <span className={`badge ${a.severity === "critical" ? "bad" : a.severity === "warning" ? "warn" : "ok"}`}>{a.severity}</span>
+                            </div>
+                            <div>{a.message}</div>
+                            <div className="rowMeta">Sim time: {a.ts ?? "n/a"}s</div>
+                          </div>
+                        ))}
+                        {(!policeAlerts || policeAlerts.length === 0) && <div className="hint">No current alerts.</div>}
                       </div>
                     )}
                   </div>

@@ -841,6 +841,15 @@ def write_web_state(
             continue
         visible_call_markers.append(marker)
 
+    visible_call_events: list[dict] = []
+    for event in (call_events or []):
+        item = dict(event)
+        status = str(item.get("status", "")).strip().lower()
+        if status in {"picked_up", "picked_up_auto", "closed_reached", "closed_breakdown", "reset_for_redispatch"}:
+            item.pop("lat", None)
+            item.pop("lon", None)
+        visible_call_events.append(item)
+
     payload = {
         "timestamp": sim_time,
         "active_ambulances": active_available,
@@ -858,7 +867,7 @@ def write_web_state(
         "corridor_route": route_now,
         "corridor_source": source_now,
         "police_notifications": police_events[-50:],
-        "calls": call_events[-100:],
+        "calls": visible_call_events[-100:],
         "call_markers": visible_call_markers[-100:],
     }
     output_path = str(output_file or "out/realtime_state.json").strip() or "out/realtime_state.json"
@@ -1809,6 +1818,23 @@ def main() -> None:
                             "assigned_hospital_id": str(call.get("assigned_hospital_id", "")),
                         }
                     )
+                    police_events.append(
+                        {
+                            "timestamp": round(sim_time, 1),
+                            "vehicle_id": best_vehicle,
+                            "status": "dispatch_assigned",
+                            "vehicle_status": "enroute",
+                            "mission_phase": "to_incident",
+                            "vehicle_lat": float(call.get("lat", 0.0)),
+                            "vehicle_lon": float(call.get("lon", 0.0)),
+                            "call_id": str(call.get("call_id", "")),
+                            "emergency_type": str(call.get("emergency_type", args.emergency_type)),
+                            "assigned_hospital_id": str(call.get("assigned_hospital_id", "")),
+                            "assigned_hospital_name": str(call.get("assigned_hospital_name", "")),
+                            "reroute_reason": "dispatch_from_hospital_pool",
+                            "corridor_tls": [],
+                        }
+                    )
                     idle_vehicles = [v for v in idle_vehicles if v != best_vehicle]
 
             last_call_dispatch_ts = sim_time
@@ -2034,6 +2060,21 @@ def main() -> None:
                                     "assigned_vehicle": vehicle_id,
                                 }
                             )
+                            police_events.append(
+                                {
+                                    "timestamp": round(float(now), 1),
+                                    "vehicle_id": vehicle_id,
+                                    "status": "caller_picked_up",
+                                    "vehicle_status": "enroute",
+                                    "mission_phase": "to_hospital",
+                                    "vehicle_lat": float(open_calls_by_id.get(call_id, {}).get("lat", 0.0)),
+                                    "vehicle_lon": float(open_calls_by_id.get(call_id, {}).get("lon", 0.0)),
+                                    "call_id": call_id,
+                                    "emergency_type": str(mission.get("emergency_type", args.emergency_type)),
+                                    "reroute_reason": "pickup_complete_reroute_hospital",
+                                    "corridor_tls": [],
+                                }
+                            )
                     last_reroute_ts_by_vehicle[vehicle_id] = now
                     continue
 
@@ -2203,6 +2244,25 @@ def main() -> None:
                 plan = selected_plan_by_vehicle.get(vehicle_id, {})
                 eta_seconds = plan.get("eta_seconds")
                 reroute_reason = str(plan.get("reroute_reason", "best_eta_capacity"))
+                mission_phase = str(vehicle_mission_by_id.get(vehicle_id, {}).get("phase", "idle"))
+                if vehicle_id in reached_logged_by_vehicle:
+                    vehicle_status = "reached"
+                elif vehicle_id in breakdown_logged_by_vehicle:
+                    vehicle_status = "breakdown"
+                elif mission_phase in {"to_incident", "to_hospital"}:
+                    vehicle_status = "enroute"
+                else:
+                    vehicle_status = "stationed"
+
+                vehicle_lat = None
+                vehicle_lon = None
+                try:
+                    vx, vy = traci.vehicle.getPosition(vehicle_id)
+                    vlon, vlat = traci.simulation.convertGeo(vx, vy)
+                    vehicle_lat = float(vlat)
+                    vehicle_lon = float(vlon)
+                except Exception:
+                    pass
 
                 corridor_for_vehicle = [
                     tls_id
@@ -2232,6 +2292,10 @@ def main() -> None:
                         "timestamp": round(float(sim_time), 1),
                         "vehicle_id": vehicle_id,
                         "status": police_status,
+                        "vehicle_status": vehicle_status,
+                        "mission_phase": mission_phase,
+                        "vehicle_lat": vehicle_lat,
+                        "vehicle_lon": vehicle_lon,
                         "corridor_tls": corridor_for_vehicle,
                         "reroute_reason": reroute_reason,
                     }
@@ -2287,6 +2351,21 @@ def main() -> None:
                             "lat": float(call_info.get("lat", 0.0)),
                             "lon": float(call_info.get("lon", 0.0)),
                             "matched_edge": str(call_info.get("matched_edge", "")),
+                        }
+                    )
+                    police_events.append(
+                        {
+                            "timestamp": round(sim_time, 1),
+                            "vehicle_id": vehicle_id,
+                            "status": status,
+                            "vehicle_status": "reached" if status == "closed_reached" else "breakdown",
+                            "mission_phase": "completed",
+                            "vehicle_lat": None,
+                            "vehicle_lon": None,
+                            "call_id": call_id,
+                            "emergency_type": str(call_info.get("emergency_type", args.emergency_type)),
+                            "reroute_reason": "mission_closed",
+                            "corridor_tls": [],
                         }
                     )
                     if status == "closed_reached":

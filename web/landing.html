@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Emergency Command Launcher</title>
+  <style>
+    :root {
+      --bg1: #e8f5ff;
+      --bg2: #d9ecff;
+      --ink: #10324d;
+      --muted: #4d6a84;
+      --line: #bfd8ef;
+      --primary: #0a7abf;
+      --secondary: #0c9d79;
+      --accent: #db7a14;
+    }
+    html, body {
+      margin: 0;
+      height: 100%;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background: radial-gradient(1200px 700px at 10% -5%, #ffffff 0%, var(--bg1) 45%, var(--bg2) 100%);
+    }
+    .shell {
+      min-height: 100%;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    .card {
+      width: min(980px, 96vw);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(6px);
+      box-shadow: 0 16px 34px rgba(16, 50, 77, 0.14);
+      padding: 24px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 30px;
+      letter-spacing: 0.2px;
+    }
+    .sub {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .grid {
+      margin-top: 20px;
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .btn {
+      display: block;
+      text-decoration: none;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      padding: 18px;
+      color: #fff;
+      font-weight: 800;
+      min-height: 120px;
+      box-sizing: border-box;
+    }
+    .btn h2 {
+      margin: 0;
+      font-size: 22px;
+    }
+    .btn p {
+      margin: 10px 0 0;
+      font-size: 13px;
+      line-height: 1.4;
+      opacity: 0.95;
+    }
+    .user { background: linear-gradient(135deg, var(--primary), #39a6e0); }
+    .police { background: linear-gradient(135deg, var(--secondary), #22b585); }
+    .split { background: linear-gradient(135deg, var(--accent), #e69a4b); }
+    .note {
+      margin-top: 16px;
+      font-size: 13px;
+      color: var(--muted);
+      border-top: 1px dashed var(--line);
+      padding-top: 10px;
+    }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="card">
+      <h1>Emergency Command Launcher</h1>
+      <p class="sub">Open the exact view you need with one click: User, Traffic Police, or Split-Screen Operations.</p>
+      <div class="grid">
+        <a class="btn user" href="/user-dashboard">
+          <h2>User View</h2>
+          <p>Citizen call workflow with user-filtered map layer and selected vehicle tracking.</p>
+        </a>
+        <a class="btn police" href="/police-dashboard">
+          <h2>Police View</h2>
+          <p>Traffic police operations panel with full fleet, signal preemption, and priority alerts.</p>
+        </a>
+        <a class="btn split" href="/split-dashboard">
+          <h2>Split Screen</h2>
+          <p>Two live map canvases side-by-side: User dashboard and Police dashboard together.</p>
+        </a>
+      </div>
+      <div class="note">Direct links: /user-dashboard, /police-dashboard, /split-dashboard, /dashboard</div>
+    </section>
+  </main>
+</body>
+</html>

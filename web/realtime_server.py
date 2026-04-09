@@ -11,7 +11,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class RealtimeHandler(BaseHTTPRequestHandler):
     state_file = "out/realtime_state.json"
+    landing_file = "web/landing.html"
     index_file = "web/index.html"
+    split_index_file = "web/split.html"
     call_file = "out/call_requests.jsonl"
     trip_command_file = "out/trip_commands.jsonl"
     control_command_file = "out/control_commands.jsonl"
@@ -21,6 +23,9 @@ class RealtimeHandler(BaseHTTPRequestHandler):
     app_password = "user123"
     auth_secret = "emergency-command-secret"
     token_ttl_s = 12 * 60 * 60
+    auth_user_store_file = "out/auth_users.json"
+    police_registration_key = ""
+    allowed_health_emergency_types = {"trauma", "cardiac", "stroke", "general"}
 
     def _send_json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -41,6 +46,22 @@ class RealtimeHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     @staticmethod
+    def _inject_page_mode(html: str, mode: str) -> str:
+        marker = "</head>"
+        script = f"<script>window.__PAGE_MODE__={json.dumps(mode)};</script>"
+        if marker in html:
+            return html.replace(marker, script + marker, 1)
+        return script + html
+
+    def _serve_index_with_mode(self, mode: str) -> None:
+        if not os.path.exists(self.index_file):
+            self._send_html("<h1>index.html not found</h1>", status=404)
+            return
+        with open(self.index_file, "r", encoding="utf-8") as f:
+            html = f.read()
+        self._send_html(self._inject_page_mode(html, mode))
+
+    @staticmethod
     def _append_call(path: str, payload: dict) -> None:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
@@ -57,6 +78,138 @@ class RealtimeHandler(BaseHTTPRequestHandler):
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload) + "\n")
+
+    @staticmethod
+    def _read_json_body(raw: bytes) -> dict:
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _password_hash(password: str, salt_hex: str = "") -> tuple[str, str]:
+        if not salt_hex:
+            salt_hex = os.urandom(16).hex()
+        salt = bytes.fromhex(salt_hex)
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 120_000)
+        return salt_hex, digest.hex()
+
+    @classmethod
+    def _load_user_store(cls) -> dict:
+        path = cls.auth_user_store_file
+        if not os.path.exists(path):
+            return {"users": []}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return {"users": []}
+            users = data.get("users", [])
+            if not isinstance(users, list):
+                return {"users": []}
+            return {"users": users}
+        except Exception:
+            return {"users": []}
+
+    @classmethod
+    def _save_user_store(cls, store: dict) -> None:
+        path = cls.auth_user_store_file
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(store, f, indent=2)
+
+    @classmethod
+    def _ensure_seed_users(cls) -> None:
+        store = cls._load_user_store()
+        users = list(store.get("users", []))
+
+        def upsert(username: str, role: str, password: str) -> None:
+            found = False
+            for row in users:
+                if str(row.get("username", "")).strip() == username and str(row.get("role", "")).strip() == role:
+                    found = True
+                    break
+            if found:
+                return
+            salt_hex, hash_hex = cls._password_hash(password)
+            users.append(
+                {
+                    "username": username,
+                    "role": role,
+                    "password_salt": salt_hex,
+                    "password_hash": hash_hex,
+                    "created_ts": int(time.time()),
+                }
+            )
+
+        if cls.app_user and cls.app_password:
+            upsert(str(cls.app_user).strip(), "user", str(cls.app_password))
+        if cls.police_user and cls.police_password:
+            upsert(str(cls.police_user).strip(), "traffic_police", str(cls.police_password))
+
+        store["users"] = users
+        cls._save_user_store(store)
+
+    @classmethod
+    def _find_user(cls, username: str, role: str = "") -> dict | None:
+        username = str(username).strip()
+        role = str(role).strip()
+        if not username:
+            return None
+        store = cls._load_user_store()
+        for row in store.get("users", []):
+            if str(row.get("username", "")).strip() != username:
+                continue
+            if role and str(row.get("role", "")).strip() != role:
+                continue
+            return row
+        return None
+
+    @classmethod
+    def _register_user(cls, username: str, password: str, role: str) -> tuple[bool, str]:
+        username = str(username).strip()
+        role = str(role).strip() or "user"
+        if not username:
+            return False, "username required"
+        if len(password) < 8:
+            return False, "password must be at least 8 characters"
+        if role not in {"user", "traffic_police"}:
+            return False, "role must be user or traffic_police"
+        if cls._find_user(username, role=role) is not None:
+            return False, "user already exists"
+
+        store = cls._load_user_store()
+        users = list(store.get("users", []))
+        salt_hex, hash_hex = cls._password_hash(password)
+        users.append(
+            {
+                "username": username,
+                "role": role,
+                "password_salt": salt_hex,
+                "password_hash": hash_hex,
+                "created_ts": int(time.time()),
+            }
+        )
+        store["users"] = users
+        cls._save_user_store(store)
+        return True, ""
+
+    @classmethod
+    def _authenticate(cls, username: str, password: str, required_role: str = "") -> tuple[bool, str, str]:
+        row = cls._find_user(username, role=required_role)
+        if row is None:
+            return False, "", ""
+
+        salt_hex = str(row.get("password_salt", "")).strip()
+        hash_hex = str(row.get("password_hash", "")).strip()
+        if not salt_hex or not hash_hex:
+            return False, "", ""
+
+        _salt, candidate = cls._password_hash(password, salt_hex=salt_hex)
+        if not hmac.compare_digest(candidate, hash_hex):
+            return False, "", ""
+
+        return True, str(row.get("username", "")).strip(), str(row.get("role", "")).strip()
 
     @classmethod
     def _issue_token(cls, username: str, role: str) -> str:
@@ -153,7 +306,31 @@ class RealtimeHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        if self.path in {"/", "/index.html"}:
+        if path_only in {"/user", "/user-dashboard"}:
+            self._serve_index_with_mode("user")
+            return
+
+        if path_only in {"/police", "/police-dashboard"}:
+            self._serve_index_with_mode("police")
+            return
+
+        if path_only in {"/split", "/split-dashboard"}:
+            if not os.path.exists(self.split_index_file):
+                self._send_html("<h1>split.html not found</h1>", status=404)
+                return
+            with open(self.split_index_file, "r", encoding="utf-8") as f:
+                self._send_html(f.read())
+            return
+
+        if path_only in {"/", "/landing", "/landing.html"}:
+            if not os.path.exists(self.landing_file):
+                self._send_html("<h1>landing.html not found</h1>", status=404)
+                return
+            with open(self.landing_file, "r", encoding="utf-8") as f:
+                self._send_html(f.read())
+            return
+
+        if self.path in {"/dashboard", "/index.html"}:
             if not os.path.exists(self.index_file):
                 self._send_html("<h1>index.html not found</h1>", status=404)
                 return
@@ -188,31 +365,106 @@ class RealtimeHandler(BaseHTTPRequestHandler):
             self._send_json(self._build_police_overview(state, username))
             return
 
+        if self.path.startswith("/api/auth/profile"):
+            token = self._parse_bearer()
+            ok, username, role = self._verify_token(token)
+            if not ok:
+                self._send_json({"ok": False, "error": "unauthorized"}, status=401)
+                return
+            self._send_json({"ok": True, "user": {"username": username, "role": role}})
+            return
+
         self.send_response(404)
         self.end_headers()
 
     def do_POST(self):
-        if self.path == "/api/police/login":
+        if self.path == "/api/auth/register":
             length = int(self.headers.get("Content-Length", "0") or 0)
             raw = self.rfile.read(length) if length > 0 else b"{}"
-            try:
-                payload = json.loads(raw.decode("utf-8"))
-            except json.JSONDecodeError:
+            payload = self._read_json_body(raw)
+            if not payload:
                 self._send_json({"ok": False, "error": "invalid json"}, status=400)
                 return
 
             username = str(payload.get("username", "")).strip()
             password = str(payload.get("password", "")).strip()
-            if username != self.police_user or password != self.police_password:
+            role = str(payload.get("role", "user")).strip() or "user"
+
+            if role == "traffic_police":
+                registration_key = str(self.headers.get("X-Police-Registration-Key", "")).strip()
+                if not self.police_registration_key or registration_key != self.police_registration_key:
+                    self._send_json(
+                        {
+                            "ok": False,
+                            "error": "police registration requires valid X-Police-Registration-Key",
+                        },
+                        status=403,
+                    )
+                    return
+
+            success, err = self._register_user(username, password, role)
+            if not success:
+                self._send_json({"ok": False, "error": err}, status=400)
+                return
+            self._send_json({"ok": True, "user": {"username": username, "role": role}})
+            return
+
+        if self.path == "/api/auth/login":
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            raw = self.rfile.read(length) if length > 0 else b"{}"
+            payload = self._read_json_body(raw)
+            if not payload:
+                self._send_json({"ok": False, "error": "invalid json"}, status=400)
+                return
+
+            username = str(payload.get("username", "")).strip()
+            password = str(payload.get("password", "")).strip()
+            required_role = str(payload.get("role", "")).strip()
+            if required_role not in {"", "user", "traffic_police"}:
+                self._send_json({"ok": False, "error": "invalid role"}, status=400)
+                return
+
+            ok, resolved_user, resolved_role = self._authenticate(username, password, required_role=required_role)
+            if not ok:
                 self._send_json({"ok": False, "error": "invalid credentials"}, status=401)
                 return
 
-            token = self._issue_token(username, "traffic_police")
+            token = self._issue_token(resolved_user, resolved_role)
             self._send_json(
                 {
                     "ok": True,
                     "token": token,
-                    "user": {"username": username, "role": "traffic_police"},
+                    "user": {"username": resolved_user, "role": resolved_role},
+                    "expires_in": int(self.token_ttl_s),
+                }
+            )
+            return
+
+        if self.path == "/api/police/login":
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            raw = self.rfile.read(length) if length > 0 else b"{}"
+            payload = self._read_json_body(raw)
+            if not payload:
+                self._send_json({"ok": False, "error": "invalid json"}, status=400)
+                return
+
+            username = str(payload.get("username", "")).strip()
+            password = str(payload.get("password", "")).strip()
+            ok, resolved_user, resolved_role = self._authenticate(
+                username,
+                password,
+                required_role="traffic_police",
+            )
+            if not ok:
+                self._send_json({"ok": False, "error": "invalid credentials"}, status=401)
+                return
+
+            token = self._issue_token(resolved_user, resolved_role)
+            self._send_json(
+                {
+                    "ok": True,
+                    "token": token,
+                    "user": {"username": resolved_user, "role": resolved_role},
                     "expires_in": int(self.token_ttl_s),
                 }
             )
@@ -221,24 +473,24 @@ class RealtimeHandler(BaseHTTPRequestHandler):
         if self.path == "/api/user/login":
             length = int(self.headers.get("Content-Length", "0") or 0)
             raw = self.rfile.read(length) if length > 0 else b"{}"
-            try:
-                payload = json.loads(raw.decode("utf-8"))
-            except json.JSONDecodeError:
+            payload = self._read_json_body(raw)
+            if not payload:
                 self._send_json({"ok": False, "error": "invalid json"}, status=400)
                 return
 
             username = str(payload.get("username", "")).strip()
             password = str(payload.get("password", "")).strip()
-            if username != self.app_user or password != self.app_password:
+            ok, resolved_user, resolved_role = self._authenticate(username, password, required_role="user")
+            if not ok:
                 self._send_json({"ok": False, "error": "invalid credentials"}, status=401)
                 return
 
-            token = self._issue_token(username, "user")
+            token = self._issue_token(resolved_user, resolved_role)
             self._send_json(
                 {
                     "ok": True,
                     "token": token,
-                    "user": {"username": username, "role": "user"},
+                    "user": {"username": resolved_user, "role": resolved_role},
                     "expires_in": int(self.token_ttl_s),
                 }
             )
@@ -334,12 +586,26 @@ class RealtimeHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": "lat/lon required"}, status=400)
             return
 
+        emergency_type = str(payload.get("emergency_type", "trauma")).strip().lower()
+        if emergency_type not in self.allowed_health_emergency_types:
+            self._send_json(
+                {
+                    "ok": False,
+                    "error": (
+                        "unsupported emergency_type for ambulance corridor; "
+                        "allowed values are trauma, cardiac, stroke, general"
+                    ),
+                },
+                status=400,
+            )
+            return
+
         call = {
             "timestamp": int(payload.get("timestamp") or 0) or int(time.time()),
             "call_id": str(payload.get("call_id") or f"call_{int(time.time() * 1000)}"),
             "lat": lat,
             "lon": lon,
-            "emergency_type": str(payload.get("emergency_type", "trauma")),
+            "emergency_type": emergency_type,
             "caller_name": str(payload.get("caller_name") or username or "citizen"),
             "preferred_hospital_id": str(payload.get("preferred_hospital_id", "")).strip(),
             "created_by": username,
@@ -356,7 +622,9 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8090)
     parser.add_argument("--state-file", default="out/realtime_state.json")
+    parser.add_argument("--landing-file", default="web/landing.html")
     parser.add_argument("--index-file", default="web/index.html")
+    parser.add_argument("--split-index-file", default="web/split.html")
     parser.add_argument("--call-file", default="out/call_requests.jsonl")
     parser.add_argument("--trip-command-file", default="out/trip_commands.jsonl")
     parser.add_argument("--control-command-file", default="out/control_commands.jsonl")
@@ -364,12 +632,20 @@ def main() -> None:
     parser.add_argument("--app-password", default=os.environ.get("APP_PASSWORD", "user123"))
     parser.add_argument("--police-user", default=os.environ.get("POLICE_USER", "traffic_police"))
     parser.add_argument("--police-password", default=os.environ.get("POLICE_PASSWORD", "police123"))
+    parser.add_argument("--auth-user-store-file", default=os.environ.get("AUTH_USER_STORE_FILE", "out/auth_users.json"))
     parser.add_argument("--auth-secret", default=os.environ.get("DASHBOARD_AUTH_SECRET", "emergency-command-secret"))
+    parser.add_argument(
+        "--police-registration-key",
+        default=os.environ.get("POLICE_REGISTRATION_KEY", ""),
+        help="Optional secret required in X-Police-Registration-Key to create traffic police accounts.",
+    )
     parser.add_argument("--token-ttl-s", type=int, default=12 * 60 * 60)
     args = parser.parse_args()
 
     RealtimeHandler.state_file = args.state_file
+    RealtimeHandler.landing_file = args.landing_file
     RealtimeHandler.index_file = args.index_file
+    RealtimeHandler.split_index_file = args.split_index_file
     RealtimeHandler.call_file = args.call_file
     RealtimeHandler.trip_command_file = args.trip_command_file
     RealtimeHandler.control_command_file = args.control_command_file
@@ -377,8 +653,11 @@ def main() -> None:
     RealtimeHandler.app_password = args.app_password
     RealtimeHandler.police_user = args.police_user
     RealtimeHandler.police_password = args.police_password
+    RealtimeHandler.auth_user_store_file = args.auth_user_store_file
     RealtimeHandler.auth_secret = args.auth_secret
+    RealtimeHandler.police_registration_key = str(args.police_registration_key or "").strip()
     RealtimeHandler.token_ttl_s = int(args.token_ttl_s)
+    RealtimeHandler._ensure_seed_users()
 
     httpd = ThreadingHTTPServer((args.host, args.port), RealtimeHandler)
     print(f"Dashboard: http://{args.host}:{args.port}")
