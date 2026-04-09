@@ -2062,6 +2062,7 @@ def main() -> None:
                         for h in hospitals.suitable_hospitals(vehicle_emergency_type)
                         if h.hospital_id in hospital_edge_map
                     }
+                    preferred_hid = str(mission.get("preferred_hospital_id", "")).strip()
                     closest_hid = ""
                     closest_eta = float("inf")
                     for hid in suitable_ids:
@@ -2069,8 +2070,19 @@ def main() -> None:
                         if eta_val < closest_eta:
                             closest_eta = eta_val
                             closest_hid = hid
-                    if closest_hid and closest_eta < float("inf"):
-                        best = hospital_by_id.get(closest_hid, best)
+
+                    chosen_hid = closest_hid
+                    # Respect user-selected preferred hospital when it is feasible.
+                    if preferred_hid and preferred_hid in suitable_ids:
+                        preferred_eta = float(etas.get(preferred_hid, float("inf")))
+                        max_extra = float(args.preferred_hospital_max_extra_eta_s)
+                        if preferred_eta < float("inf") and (
+                            closest_eta == float("inf") or preferred_eta <= (closest_eta + max_extra)
+                        ):
+                            chosen_hid = preferred_hid
+
+                    if chosen_hid and float(etas.get(chosen_hid, float("inf"))) < float("inf"):
+                        best = hospital_by_id.get(chosen_hid, best)
 
                 assigned_id = assigned_hospital_id_by_vehicle.get(vehicle_id)
                 now_ts = float(now)
