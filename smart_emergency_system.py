@@ -35,6 +35,8 @@ _LAST_CORRIDOR_VIS: dict[str, object] = {
     "corridor_source": "none",
 }
 
+ALLOWED_HEALTH_EMERGENCY_TYPES = {"trauma", "cardiac", "stroke", "general"}
+
 
 def ensure_sumo_import():
     if "SUMO_HOME" not in os.environ:
@@ -716,6 +718,7 @@ def write_web_state(
     global _LAST_CORRIDOR_VIS
 
     items = []
+    visible_call_markers: list[dict] = []
     corridor_route: list[list[float]] = []
     corridor_source = "none"
     for vehicle_id in active_vehicles:
@@ -731,6 +734,15 @@ def write_web_state(
         driver = driver_details_by_vehicle.get(vehicle_id, {})
         home_hospital_id = str(vehicle_home_hospital_by_id.get(vehicle_id, "")).strip()
         home_hospital_name = str(hospital_name_by_id.get(home_hospital_id, home_hospital_id or ""))
+        return_hospital_id = str(mission.get("return_hospital_id", "")).strip()
+        return_hospital_name = str(hospital_name_by_id.get(return_hospital_id, return_hospital_id or ""))
+        destination_hospital_id = str(plan.get("hospital_id", "")).strip() or return_hospital_id or home_hospital_id
+        destination_hospital_name = (
+            str(plan.get("hospital_name", "")).strip()
+            or return_hospital_name
+            or home_hospital_name
+            or destination_hospital_id
+        )
         live_route_preview = build_route_preview_geo(
             traci,
             vehicle_id,
@@ -766,6 +778,8 @@ def write_web_state(
                 "lon": float(lon),
                 "speed_kmh": round(speed_mps * 3.6, 2),
                 "hospital_name": plan.get("hospital_name", ""),
+                "destination_hospital_id": destination_hospital_id,
+                "destination_hospital_name": destination_hospital_name,
                 "eta_seconds": plan.get("eta_seconds"),
                 "reroute_reason": plan.get("reroute_reason", ""),
                 "police_notification_status": plan.get("police_notification_status", "pending"),
@@ -781,10 +795,8 @@ def write_web_state(
                 "call_id": str(mission.get("call_id", "")),
                 "incident_edge": str(mission.get("incident_edge", "")),
                 "preferred_hospital_id": str(mission.get("preferred_hospital_id", "")),
-                "return_hospital_id": str(mission.get("return_hospital_id", "")),
-                "return_hospital_name": str(
-                    hospital_name_by_id.get(str(mission.get("return_hospital_id", "")).strip(), str(mission.get("return_hospital_id", "")))
-                ),
+                "return_hospital_id": return_hospital_id,
+                "return_hospital_name": return_hospital_name,
                 "route_source": route_source,
                 "route_preview": route_preview,
             }
@@ -822,6 +834,13 @@ def write_web_state(
             source_now = "held_snapshot"
             mode_now = str(_LAST_CORRIDOR_VIS.get("planned_corridor_mode") or "strict")
 
+    for marker in (call_markers or []):
+        status = str(marker.get("status", "")).strip().lower()
+        # Remove caller red marker as soon as ambulance reaches caller/pickup.
+        if status in {"picked_up", "picked_up_auto", "closed_reached", "closed_breakdown", "reset_for_redispatch"}:
+            continue
+        visible_call_markers.append(marker)
+
     payload = {
         "timestamp": sim_time,
         "active_ambulances": active_available,
@@ -840,7 +859,7 @@ def write_web_state(
         "corridor_source": source_now,
         "police_notifications": police_events[-50:],
         "calls": call_events[-100:],
-        "call_markers": call_markers[-100:],
+        "call_markers": visible_call_markers[-100:],
     }
     output_path = str(output_file or "out/realtime_state.json").strip() or "out/realtime_state.json"
     if "\x00" in output_path:
@@ -1275,12 +1294,15 @@ def main() -> None:
     parser.add_argument(
         "--preemption-all-red-s",
         type=float,
-        default=8.0,
+        default=2.0,
         help="All-red safety hold before emergency green phase (seconds).",
     )
-    parser.add_argument("--min-dynamic-green-s", type=float, default=12.0)
-    parser.add_argument("--max-dynamic-green-s", type=float, default=55.0)
-    parser.add_argument("--queue-gain-s", type=float, default=2.0)
+    parser.add_argument("--preemption-yellow-s", type=float, default=3.0)
+    parser.add_argument("--min-owner-hold-s", type=float, default=12.0)
+    parser.add_argument("--post-restore-cooldown-s", type=float, default=8.0)
+    parser.add_argument("--min-dynamic-green-s", type=float, default=18.0)
+    parser.add_argument("--max-dynamic-green-s", type=float, default=70.0)
+    parser.add_argument("--queue-gain-s", type=float, default=1.4)
     parser.add_argument("--reroute-interval-s", type=float, default=5.0)
     parser.add_argument(
         "--reroute-min-dwell-s",
@@ -1349,9 +1371,19 @@ def main() -> None:
         lookahead_m=float(controller_profile.get("lookahead_m", cfg.get("lookahead_m", 350.0))),
         hold_green_s=float(controller_profile.get("hold_green_s", cfg.get("hold_green_s", 18.0))),
         restore_after_s=float(controller_profile.get("restore_after_s", cfg.get("restore_after_s", 20.0))),
+        min_owner_hold_s=float(controller_profile.get("min_owner_hold_s", cfg.get("min_owner_hold_s", args.min_owner_hold_s))),
         max_owner_hold_s=float(controller_profile.get("max_owner_hold_s", 35.0)),
         min_switch_interval_s=float(controller_profile.get("min_switch_interval_s", 5.0)),
+        yellow_transition_s=float(
+            controller_profile.get("yellow_transition_s", cfg.get("yellow_transition_s", args.preemption_yellow_s))
+        ),
         all_red_s=float(controller_profile.get("all_red_s", cfg.get("all_red_s", args.preemption_all_red_s))),
+        post_restore_cooldown_s=float(
+            controller_profile.get(
+                "post_restore_cooldown_s",
+                cfg.get("post_restore_cooldown_s", args.post_restore_cooldown_s),
+            )
+        ),
         min_dynamic_green_s=float(
             controller_profile.get("min_dynamic_green_s", cfg.get("min_dynamic_green_s", args.min_dynamic_green_s))
         ),
@@ -1542,13 +1574,21 @@ def main() -> None:
             if not matched_edge:
                 continue
 
+            emergency_type = str(call.get("emergency_type", args.emergency_type)).strip().lower()
+            if emergency_type not in ALLOWED_HEALTH_EMERGENCY_TYPES:
+                print(
+                    f"[CALL][SKIP] call_id={call_id} unsupported emergency_type={emergency_type}; "
+                    "ambulance corridor supports trauma/cardiac/stroke/general only"
+                )
+                continue
+
             open_calls_by_id[call_id] = {
                 "call_id": call_id,
                 "timestamp": float(call.get("timestamp", time.time())),
                 "lat": lat,
                 "lon": lon,
                 "matched_edge": matched_edge,
-                "emergency_type": str(call.get("emergency_type", args.emergency_type)),
+                "emergency_type": emergency_type,
                 "caller_name": str(call.get("caller_name", "citizen")),
                 "preferred_hospital_id": str(call.get("preferred_hospital_id", "")).strip(),
                 "status": "pending_dispatch",

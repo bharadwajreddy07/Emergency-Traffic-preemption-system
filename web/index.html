@@ -112,6 +112,7 @@
       const [toasts, setToasts] = useState([]);
       const [userName, setUserName] = useState("citizen_user");
       const [userPassword, setUserPassword] = useState("user123");
+      const [userNewPassword, setUserNewPassword] = useState("");
       const [userToken, setUserToken] = useState("");
       const [userProfile, setUserProfile] = useState(null);
       const [activeTab, setActiveTab] = useState("ops");
@@ -177,10 +178,10 @@
 
       async function userLogin() {
         try {
-          const res = await fetch("/api/user/login", {
+          const res = await fetch("/api/auth/login", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username: userName, password: userPassword }),
+            body: JSON.stringify({ username: userName, password: userPassword, role: "user" }),
           });
           const body = await res.json();
           if (!body.ok || !body.token) {
@@ -196,6 +197,35 @@
           pushToast("User login successful");
         } catch (e) {
           pushToast("User login API unreachable");
+        }
+      }
+
+      async function userRegister() {
+        if (!userName.trim()) {
+          pushToast("Username is required for registration");
+          return;
+        }
+        const password = (userNewPassword || userPassword || "").trim();
+        if (password.length < 8) {
+          pushToast("Password must be at least 8 characters");
+          return;
+        }
+        try {
+          const res = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: userName, password, role: "user" }),
+          });
+          const body = await res.json();
+          if (!body.ok) {
+            pushToast(`Registration failed: ${body.error || "invalid"}`);
+            return;
+          }
+          setUserPassword(password);
+          setUserNewPassword("");
+          pushToast("Registration complete. Please sign in.");
+        } catch (e) {
+          pushToast("Registration API unreachable");
         }
       }
 
@@ -224,10 +254,10 @@
 
       async function policeLogin() {
         try {
-          const res = await fetch("/api/police/login", {
+          const res = await fetch("/api/auth/login", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username: policeUser, password: policePassword }),
+            body: JSON.stringify({ username: policeUser, password: policePassword, role: "traffic_police" }),
           });
           const body = await res.json();
           if (!body.ok || !body.token) {
@@ -344,6 +374,7 @@
           m.setIcon(L.divIcon({ className: "", html: markerHtml(amb.status), iconSize: [18, 18] }));
           m.bindPopup(
             `${amb.id}<br/>status=${amb.status}<br/>phase=${amb.mission_phase || "idle"}<br/>hospital=${amb.hospital_name || "n/a"}` +
+            `<br/>destination=${amb.destination_hospital_name || amb.return_hospital_name || amb.home_hospital_name || "n/a"}` +
             `<br/>home=${amb.home_hospital_name || amb.home_hospital_id || "n/a"}<br/>driver=${amb.driver_name || "n/a"}` +
             `<br/>return=${amb.return_hospital_name || amb.return_hospital_id || "n/a"}<br/>route=${amb.route_source || "none"}` +
             `<br/>phone=${amb.driver_phone || "n/a"}<br/>eta=${amb.eta_seconds ?? "n/a"}s`
@@ -652,10 +683,39 @@
 
       const actionableCalls = useMemo(() => {
         const markers = Array.isArray(data.call_markers) ? data.call_markers : [];
-        return markers
-          .filter(c => ["assigned", "picked_up"].includes(String(c.status || "")))
-          .sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
-      }, [data.call_markers]);
+        const calls = Array.isArray(data.calls) ? data.calls : [];
+        const markerByCallId = new Map();
+        for (const m of markers) {
+          const id = String(m.call_id || "");
+          if (!id) continue;
+          markerByCallId.set(id, m);
+        }
+        const latestByCallId = new Map();
+        for (const ev of calls) {
+          const id = String(ev.call_id || "");
+          if (!id) continue;
+          const prev = latestByCallId.get(id);
+          if (!prev || Number(ev.timestamp || 0) >= Number(prev.timestamp || 0)) {
+            latestByCallId.set(id, ev);
+          }
+        }
+
+        const merged = [];
+        for (const [callId, ev] of latestByCallId.entries()) {
+          const status = String(ev.status || "").toLowerCase();
+          if (!["assigned", "picked_up", "picked_up_auto"].includes(status)) continue;
+          const m = markerByCallId.get(callId) || {};
+          merged.push({
+            ...m,
+            ...ev,
+            call_id: callId,
+            status,
+            assigned_hospital_name: m.assigned_hospital_name || m.assigned_hospital_id || ev.assigned_hospital_id || "",
+          });
+        }
+        merged.sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+        return merged;
+      }, [data.call_markers, data.calls]);
 
       return (
         <>
@@ -693,9 +753,9 @@
                     <h3>Objective Coverage</h3>
                     <div className="feedLine"><span>Wireless + siren verification</span><span className="badge ok">enabled</span></div>
                     <div className="feedLine"><span>Immediate green corridor</span><span className="badge ok">enabled</span></div>
-                    <div className="feedLine"><span>Priority for emergency services</span><span className="badge ok">ambulance/fire/police</span></div>
+                    <div className="feedLine"><span>Priority for emergency services</span><span className="badge ok">health ambulance only</span></div>
                     <div className="feedLine"><span>Auto restore normal traffic</span><span className="badge ok">enabled</span></div>
-                    <div className="hint">Coverage reflects your slide objectives: verification, instant corridor, delay reduction, and restore-after-pass.</div>
+                    <div className="hint">Coverage reflects your objectives: verified trigger, health-only dispatch, stable corridor timing, and restore-after-pass.</div>
                   </div>
 
                   <div className="card">
@@ -704,8 +764,10 @@
                       <>
                         <input className="field" value={userName} onChange={e => setUserName(e.target.value)} placeholder="Username" />
                         <input className="field" type="password" value={userPassword} onChange={e => setUserPassword(e.target.value)} placeholder="Password" />
+                        <input className="field" type="password" value={userNewPassword} onChange={e => setUserNewPassword(e.target.value)} placeholder="New password (for signup)" />
                         <button className="btn" onClick={userLogin}>Sign In As User</button>
-                        <div className="note">Default user credential: citizen_user / user123</div>
+                        <button className="btnGhost" onClick={userRegister}>Create User Account</button>
+                        <div className="note">Default seed user for local demo: citizen_user / user123</div>
                       </>
                     )}
                     {userToken && (
@@ -718,14 +780,12 @@
 
                   <div className="card">
                     <h3>Emergency Call</h3>
-                    <div className="hint">Click map for location. Preferred hospital options are nearest to that location.</div>
+                    <div className="hint">Click map for location. This corridor is restricted to health emergencies only.</div>
                     <input className="field" value={callerName} onChange={e => setCallerName(e.target.value)} placeholder="Caller name" />
                     <select className="field" value={emergencyType} onChange={e => setEmergencyType(e.target.value)}>
                       <option value="trauma">Trauma</option>
                       <option value="cardiac">Cardiac</option>
                       <option value="stroke">Stroke</option>
-                      <option value="fire_truck">Fire Truck</option>
-                      <option value="police_response">Police Response</option>
                       <option value="general">General</option>
                     </select>
                     <input className="field" value={callLat} onChange={e => setCallLat(e.target.value)} placeholder="Latitude" />
@@ -746,7 +806,7 @@
                       {(data.ambulances || []).map(a => (
                         <div className="row" key={a.id}>
                           <div className="id">{a.id}</div>
-                          <div>Hospital: {a.hospital_name || "n/a"}</div>
+                          <div>Hospital: {a.destination_hospital_name || a.hospital_name || a.return_hospital_name || a.home_hospital_name || "n/a"}</div>
                           <div>ETA: {a.eta_seconds ?? "n/a"}s</div>
                           <div>Mission: {a.mission_phase || "idle"}</div>
                           <div>Driver: {a.driver_name || "n/a"} {a.driver_phone ? `(${a.driver_phone})` : ""}</div>
@@ -899,7 +959,7 @@
                             <div className="rowTitle">{a.id || "ambulance"}</div>
                             <div>Status: {a.status || "enroute"}</div>
                             <div>Mission: {a.mission_phase || "idle"}</div>
-                            <div>Hospital: {a.hospital_name || "n/a"}</div>
+                            <div>Hospital: {a.destination_hospital_name || a.hospital_name || a.return_hospital_name || a.home_hospital_name || "n/a"}</div>
                             <div>Home hospital: {a.home_hospital_name || a.home_hospital_id || "n/a"}</div>
                             <div>Driver: {a.driver_name || "n/a"} {a.driver_phone ? `(${a.driver_phone})` : ""}</div>
                             <div>ETA: {a.eta_seconds ?? "n/a"}s</div>
