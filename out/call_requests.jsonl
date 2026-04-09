@@ -1,3 +1,3 @@
 
-{"timestamp": 1775630291, "call_id": "call_1775630291564", "lat": 17.451173, "lon": 78.387223, "emergency_type": "stroke", "caller_name": "citizen_user", "preferred_hospital_id": "oakridge_hospitals", "created_by": "citizen_user", "created_by_role": "user", "status": "new"}
-{"timestamp": 1775630567, "call_id": "call_1775630567415", "lat": 17.456894, "lon": 78.384489, "emergency_type": "stroke", "caller_name": "citizen_user", "preferred_hospital_id": "", "created_by": "citizen_user", "created_by_role": "user", "status": "new"}
+{"timestamp": 1775743793, "call_id": "call_1775743793014", "lat": 17.451186, "lon": 78.385646, "emergency_type": "general", "caller_name": "citizen_user", "preferred_hospital_id": "pace_hospitals", "created_by": "citizen_user", "created_by_role": "user", "status": "new"}
+{"timestamp": 1775744030, "call_id": "call_1775744030644", "lat": 17.454141, "lon": 78.38008, "emergency_type": "general", "caller_name": "citizen_user", "preferred_hospital_id": "pace_hospitals", "created_by": "citizen_user", "created_by_role": "user", "status": "new"}

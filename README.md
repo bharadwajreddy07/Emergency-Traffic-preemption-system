@@ -267,9 +267,14 @@ Web dashboard now shows:
 ### Signal behavior update
 
 1. Runner no longer forces always-on green corridor.
-2. Emergency preemption can use a configurable all-red safety window (`all_red_s`, default 120s).
-3. Green hold duration is demand-adaptive using controlled-lane queues (`min_dynamic_green_s`..`max_dynamic_green_s`).
-4. After preemption release, TLS returns to baseline SUMO program (including normal yellow/green progression).
+2. Emergency preemption now uses realistic transition windows:
+  - yellow transition (`yellow_transition_s`, default 3s)
+  - all-red clearance (`all_red_s`, default 2s)
+3. Green hold duration is demand-adaptive and bounded (`min_dynamic_green_s`..`max_dynamic_green_s`, default 18..70s).
+4. Anti-oscillation guards reduce rapid TLS flipping:
+  - minimum owner hold (`min_owner_hold_s`)
+  - post-restore cooldown (`post_restore_cooldown_s`)
+5. After preemption release, TLS returns to baseline SUMO program.
 
 ## 5.4) User Web Call -> Ambulance Dispatch -> Hospital Reroute
 
@@ -279,6 +284,11 @@ Web dashboard now shows:
 4. Ambulance first routes to caller edge (`dispatch_to_caller`).
 5. After pickup, reroutes to best hospital using live merged traffic costs.
 6. Green-corridor and police notifications continue for that mission.
+
+Health-only constraint:
+
+- `emergency_type` must be one of `trauma`, `cardiac`, `stroke`, or `general`.
+- Non-health request types (for example fire/disaster) are rejected by the API for this ambulance corridor pipeline.
 
 Call API now supports preferred hospital hint:
 
@@ -320,6 +330,12 @@ Run with police mobile target:
 2. map-based call dispatch
 3. preferred hospital selection
 4. fleet/call timeline panels
+
+The dashboard also includes:
+
+1. persistent auth-backed login for user and traffic police roles
+2. user self-registration (`/api/auth/register` for role `user`)
+3. token profile endpoint (`/api/auth/profile`)
 
 ## 5.5) Ambulances Initially Stationed At Hospitals
 

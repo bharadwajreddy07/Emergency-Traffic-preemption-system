@@ -29,3 +29,4 @@
 {"timestamp": 1775630386, "hospital_id": "medicover", "vehicle_id": "ambulance_13", "emergency_type": "stroke", "eta_seconds": 70.3}
 {"timestamp": 1775630423, "hospital_id": "apollo_dental_clinic_hitech_city", "vehicle_id": "ambulance_13", "emergency_type": "stroke", "eta_seconds": 60.5}
 {"timestamp": 1775630443, "hospital_id": "lifespan_hospitals", "vehicle_id": "ambulance_13", "emergency_type": "stroke", "eta_seconds": 96.2}
+{"timestamp": 1775744204, "hospital_id": "medicover", "vehicle_id": "ambulance_32", "emergency_type": "general", "eta_seconds": 141.2}

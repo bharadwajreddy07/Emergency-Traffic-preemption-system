@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Emergency Split Screen Ops</title>
+  <style>
+    :root {
+      --bg: #e9f2fb;
+      --line: #cddced;
+      --ink: #102a43;
+      --muted: #486581;
+    }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+    .shell {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      height: 100%;
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--line);
+      background: #f8fbff;
+      padding: 10px 12px;
+    }
+    .title {
+      font-size: 16px;
+      font-weight: 800;
+      color: #0b4f75;
+    }
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 8px;
+      height: 100%;
+      box-sizing: border-box;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #fff;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 0;
+    }
+    .panelHeader {
+      border-bottom: 1px solid var(--line);
+      padding: 8px 10px;
+      background: #f7fbff;
+      font-size: 13px;
+      font-weight: 800;
+      color: #1b4b68;
+    }
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      min-height: 0;
+    }
+    @media (max-width: 1100px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="topbar">
+      <div>
+        <div class="title">Emergency Operations Split Screen</div>
+        <div class="hint">Left: user-filtered map and call workflow. Right: traffic-police full operations map and notifications.</div>
+      </div>
+      <div class="hint">Open this page at <strong>/split-dashboard</strong></div>
+    </div>
+
+    <div class="grid">
+      <section class="panel">
+        <div class="panelHeader">User Dashboard</div>
+        <iframe src="/user-dashboard" title="User Dashboard"></iframe>
+      </section>
+      <section class="panel">
+        <div class="panelHeader">Traffic Police Dashboard</div>
+        <iframe src="/police-dashboard" title="Traffic Police Dashboard"></iframe>
+      </section>
+    </div>
+  </div>
+</body>
+</html>

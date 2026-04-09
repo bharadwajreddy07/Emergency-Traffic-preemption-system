@@ -1,0 +1,18 @@
+{
+  "users": [
+    {
+      "username": "citizen_user",
+      "role": "user",
+      "password_salt": "5cf5354c520ce670a5d9390a03da450c",
+      "password_hash": "bfc8817bd15420425e58138b7f5353e31d570ee78330705bf1a4a1d74b3d06f8",
+      "created_ts": 1775719431
+    },
+    {
+      "username": "traffic_police",
+      "role": "traffic_police",
+      "password_salt": "506f691741ffd9cef3fdc51ea0e57bbc",
+      "password_hash": "a25452550e11cbf8cce54c11ec59c2633c92d425ef0c684e391483d2c99afc0b",
+      "created_ts": 1775719431
+    }
+  ]
+}
